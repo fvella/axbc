@@ -21,12 +21,12 @@ OBJ=axbc2d.o cuda_kernels.o adtp.o
 
 # https://stackoverflow.com/questions/2734719/how-to-compile-a-static-library-in-linux
 axbc: ${OBJ}
-	${LD} -o ../bin/$(EXEC) ${OBJ} ${LDFLAGS}
+	${LD} -o $(DEST_DIR)$(EXEC) ${OBJ} ${LDFLAGS}
 
 .c.o:; $(CC) $(CFLAGS) -I$(MPI_HOME)/include    $< -o $@
 
 %.o: %.cu
 	$(CUDACC) $(CUDACFLAGS) $(CUDA_ARCH) -I$(MPI_HOME)/include $<
 clean:
-	rm -rf *.o ../bin/$(EXEC)
+	rm -rf *.o $(DEST_DIR)$(EXEC)
 
