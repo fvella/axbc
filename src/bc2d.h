@@ -3,26 +3,7 @@
 
 #define OVERLAP 1
 #define ONEPREFIX 1
-
-#ifdef USE_NVTX
-#define PUSH_RANGE(name,cid) { \
-        int color_id = cid; \
-        color_id = color_id%num_colors;\
-        nvtxEventAttributes_t eventAttrib = {0}; \
-        eventAttrib.version = NVTX_VERSION; \
-        eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE; \
-        eventAttrib.colorType = NVTX_COLOR_ARGB; \
-        eventAttrib.color = colors[color_id]; \
-        eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII; \
-        eventAttrib.message.ascii = name; \
-        nvtxRangePushEx(&eventAttrib); \
-}
-#define POP_RANGE nvtxRangePop();
-#else
-#define PUSH_RANGE(name,cid)
-#define POP_RANGE
-#endif
-
+#define THRUST 1
 //#define _LARGE_LVERTS_NUM
 #ifdef	_LARGE_LVERTS_NUM
 //#define LOCINT	   uint64_t
@@ -34,7 +15,7 @@
 #define LOCPRI	   PRIu32
 #define LOCINT_MPI MPI_UNSIGNED
 #endif
-
+#define DEFAULT_SEED 4343543
 #define MAX(a,b)	(((a)>(b))?(a):(b))
 #define MIN(a,b)	(((a)<(b))?(a):(b))
 
@@ -55,7 +36,7 @@
 #define VERT2PROC(i)	(EDGE2PROC(i,i))		// global vertex (i,)  -> processor
 
 #define GI2LOCI(i)	(((i)/col_bl)*row_bl + (i)%row_bl) // global row -> local row
-#define GJ2LOCJ(j)	((j)%col_bl)			   		   // global col -> local col
+#define GJ2LOCJ(j)	((j)%col_bl)			   // global col -> local col
 
 #define LOCI2GI(i)	(((i)/row_bl)*col_bl + myrow*row_bl + (i)%row_bl) // local row -> global row
 #define LOCJ2GJ(j)	(mycol*col_bl + (j))				  // local col -> global col
@@ -74,7 +55,7 @@
 
 #define MYLOCI2LOCJ(i)	(((i)%row_bl) + myrow*row_bl)	// local OWNED row -> local col
 #define MYLOCJ2LOCI(j)	(((j)%row_bl) + mycol*row_bl)	// local OWNED col -> local row
-#define REMJ2GJ(j,pj)	((pj)*col_bl + (j))				// col of proc (*,pj) -> global col
+#define REMJ2GJ(j,pj)	((pj)*col_bl + (j))		// col of proc (*,pj) -> global col
 
 #define ISMYCOLL(j)		((j/row_bl) == (LOCINT)(myrow))  // local col -> proc row
 
@@ -134,8 +115,6 @@ typedef struct
 	uint64_t compu;      // Computation Total time
 	uint64_t commu;      // Communication Total time
 	uint64_t tot;       // Total time
-	uint64_t ned;       // Traversed Edges
-	double teps;		// Teps
 	uint64_t upw[2];    // Computation and Communication time
 	uint64_t dep[2];    // Computation and Communication time
 	uint64_t upd[2];    // Computation and Communication time
@@ -151,9 +130,12 @@ typedef struct
 #define LINKAGE
 #endif
 extern LINKAGE void setcuda(uint64_t ned, LOCINT *col, LOCINT *row, LOCINT reach_v0);
+extern LINKAGE void setcuda_2degree(LOCINT reach_v0, LOCINT reach_v1, LOCINT reach_v2);
 extern LINKAGE size_t initcuda(uint64_t ned, LOCINT *col, LOCINT *row);
 extern LINKAGE int assignDeviceToProcess();
 extern LINKAGE void set_mlp_cuda(LOCINT row, int level, int sigma);
+extern LINKAGE void set_mlp_cuda_2degree(LOCINT row, int level, int sigma);
+
 extern LINKAGE LOCINT scan_col_csc_cuda(LOCINT *rbuf, LOCINT ld, int *rnum, int np, LOCINT *sbuf, int *snum,
                                         LOCINT *frt, LOCINT *frt_sigma, int level);
 
@@ -162,14 +144,18 @@ extern LINKAGE LOCINT scan_col_csc_cuda_mono(int ncol, int level);
 extern LINKAGE LOCINT scan_frt_csc_cuda(const LOCINT *__restrict__ frt, int ncol, int depth, float *hSRbuf);
 
 extern LINKAGE LOCINT scan_frt_csc_cuda_mono(int offset, int ncol, int depth);
+extern LINKAGE LOCINT scan_frt_csc_cuda_mono_2degree(int offset, int ncol, int depth, short branch, LOCINT v2dg);
+
 
 extern LINKAGE LOCINT write_delta_cuda(LOCINT ncol, float *hRFbuf, float *hSFbuf);
 
 extern LINKAGE LOCINT append_rows_cuda(LOCINT *rbuf, LOCINT ld,   int *rnum, int np,
                                        LOCINT *frt, LOCINT *frt_sigma, LOCINT nfrt, int level);
 
-extern LINKAGE void update_bc_cuda(uint64_t v0, int ncol, const uint64_t nvisited);
-extern LINKAGE void pre_update_bc_cuda(LOCINT *reach, uint64_t v0, LOCINT* all);
+extern LINKAGE void update_bc_cuda(LOCINT v0, float p, int ncol, const uint64_t nvisited);
+extern LINKAGE void update_bc_cuda_2degree(LOCINT v0, uint64_t v1, uint64_t v2, int ncol, const uint64_t nvisited_v0, const uint64_t nvisited_v1,const uint64_t nvisited_v2);
+
+extern LINKAGE void pre_update_bc_cuda(LOCINT *reach, LOCINT v0, LOCINT* all);
 extern LINKAGE void init_bc_1degree_device(LOCINT *reach);
 
 extern LINKAGE void get_all(LOCINT *all);
@@ -180,6 +166,8 @@ extern LINKAGE void set_lvl(int *lvl);
 extern LINKAGE void get_msk(LOCINT *msk);
 extern LINKAGE void get_deg(LOCINT *deg);
 extern LINKAGE void get_bc(float *bc);
+extern LINKAGE void get_delta(float *delta);
+
 extern LINKAGE void get_sigma(LOCINT *sigma);
 extern LINKAGE void set_sigma(LOCINT *sigma);
 extern LINKAGE void set_get_overlap(LOCINT *sigma, int *lvl);
@@ -192,7 +180,7 @@ extern LINKAGE void *CudaMallocHostSet(size_t size, int val);
 extern LINKAGE void CudaFreeHost(void *ptr);
 extern LINKAGE void pred_reqs_cuda(LOCINT min, LOCINT max, LOCINT *sbuf, LOCINT ld, int *snum);
 extern LINKAGE void pred_resp_cuda(LOCINT *rbuf, LOCINT ld, int *rnum);
-
+extern LINKAGE void sort_by_degree(LOCINT *deg,LOCINT *bc_order);
 extern LINKAGE void dump_array2(int *arr, int n, const char *name);
 extern LINKAGE void dump_uarray2(LOCINT *arr, int n, const char *name);
 extern LINKAGE void dump_farray2(float *arr, int n, const char *name);
@@ -215,5 +203,7 @@ extern int pmesh[MAX_PROC_I][MAX_PROC_J];
 extern MPI_Comm Row_comm, Col_comm;
 extern FILE *outdebug;
 extern LOCINT *tlvl;
+extern LOCINT *tlvl_v1;
 extern uint64_t overlap_time; 
+
 #endif

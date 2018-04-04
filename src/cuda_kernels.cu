@@ -4,25 +4,24 @@
 #include <sys/time.h>
 #include <cuda.h>
 #include <mpi.h>
+
 #include <thrust/device_vector.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/reduce.h>
 #include <thrust/transform_reduce.h>
+#include <thrust/sort.h>
+#include "cub/device/device_scan.cuh"
 #include "cudamacro.h"
 #include "bc2d.h"
-#ifdef USE_NVTX
-#include "nvToolsExt.h"
-static const uint32_t colors[] = { 0x0000ff00, 0x000000ff, 0x00ffff00, 0x00ff00ff, 0x0000ffff, 0x00ff0000, 0x00ffffff };
-static const int num_colors = sizeof(colors)/sizeof(uint32_t);
+using namespace cub;
 
-#endif
-
+// BEST  DRAKE 128 1 2 
+// BEST PizDaint 2 2  256
 #define THREADS (128)
-
-#define ROWXTH 1
-#define ROWXTHD 2
-
+#define ROWXTH 2
+#define ROWXTHD 1
+#define THRUST 1
 __device__ __constant__ LOCINT dN;
 __device__ __constant__ LOCINT drow_bl;
 __device__ __constant__ LOCINT dcol_bl;
@@ -35,11 +34,12 @@ __device__ __constant__ int dmycol;
 
 __device__ LOCINT dnfrt;
 
-__device__ LOCINT d_reach_v0;
+__device__ LOCINT d_reach_v0; 
+
 
 
 static LOCINT	*d_msk=NULL;
-static int	    *d_lvl=NULL;
+static int	*d_lvl=NULL;
 
 static LOCINT	*d_col=NULL;
 static LOCINT	*d_row=NULL;
@@ -56,19 +56,33 @@ static LOCINT   *d_frt=NULL;
 static LOCINT   *d_frt_start=NULL;
 static LOCINT   *d_frt_sig=NULL;
 
+
 static LOCINT   *d_sig=NULL;
+
 static LOCINT   *d_tmp_sig=NULL;
 static LOCINT	*d_rbuf_sig=NULL;
 static LOCINT	*d_sbuf_sig=NULL;
 
 static float    *d_delta=NULL;
+
 static float    *d_fsbuf=NULL;
 static float    *d_frbuf=NULL;
 static float 	*d_bc=NULL;
 static LOCINT   *d_reach= NULL;
 static LOCINT   *d_all = NULL;
+
+
+#ifndef THRUST
+static size_t cubtmp_sz=0;
+static LOCINT *d_cubtmp= NULL;
+#endif
 cudaEvent_t     start, stop;
 cudaStream_t    stream[2];
+
+
+
+
+
 
 FILE *Fopen(const char *path, const char *mode) {
 
@@ -252,27 +266,27 @@ __global__ void write_sigma(const LOCINT *__restrict__ sbuf, const LOCINT *__res
 
 
 
-__global__ void update_bc(const float *__restrict__ delta, int r0, LOCINT n,  float *bc, LOCINT *reach, const uint64_t nvisited) {
+__global__ void update_bc(const float *__restrict__ delta, int r0, float p, LOCINT n,  float *bc, LOCINT *reach, const uint64_t nvisited) {
 
 	const uint32_t tid = blockDim.x*blockIdx.x + threadIdx.x;
 
 	if (tid >= n) return;
-
+	
 	if (r0 == tid)  {
-		if (d_reach_v0 > 0) bc[tid] = __ldg(&bc[tid]) + d_reach_v0*(nvisited-2);
+		if (d_reach_v0 > 0) bc[tid] = __ldg(&bc[tid])+ (d_reach_v0)*(nvisited-2);
 		return;
 	}
 
     // in verita' non e' un problema ma la cosa e' ingannevole:
     // trace dei caller row_pp -> ncol -> n
 	//bc[tid] += delta[tid]*(reach[r0]+1); ///2.0f; NON FUNZIONA SE LO FACCIAMO QUI
-    bc[tid] = __ldg(&bc[tid]) + delta[tid]*(d_reach_v0 + 1);
-
+    	bc[tid] = __ldg(&bc[tid]) + ( delta[tid]*(d_reach_v0 + 1)/p);
+//	if (tid == 0) printf("%f\n", p);
 	return;
 }
 
 
-void update_bc_cuda(uint64_t v0, int ncol, const uint64_t __restrict__ nvisited) {
+void update_bc_cuda(LOCINT v0, float p,int ncol, const uint64_t __restrict__ nvisited) {
 	// v0 is the GLOBAL root vertex
     //printf("%s at %d : %d  v: %d   proc: %d\n", __func__, __LINE__, ncol, GI2LOCI(v0),myid);
 	int r0 = -1;
@@ -283,11 +297,26 @@ void update_bc_cuda(uint64_t v0, int ncol, const uint64_t __restrict__ nvisited)
 	// dump_array2(&r0, 1, "LOCAL_ROW_INDEX");
     //dump_device_farray2(d_delta, ncol, "FINAL_DELTA");
     // dump_device_farray2(d_bc, ncol, "UPDATE_BC");
-	update_bc<<<(ncol+THREADS-1)/THREADS, THREADS>>>(d_delta, r0, ncol, d_bc, d_reach, nvisited);
+	update_bc<<<(ncol+THREADS-1)/THREADS, THREADS>>>(d_delta, r0, p,ncol, d_bc, d_reach, nvisited);
     //dump_device_farray2(d_bc, ncol, "FINAL_BC");
 }
+void sort_by_degree(LOCINT *deg, LOCINT *bc_order){
+//	uint64_t i = 0;
+/*	for (i =0 ; i < N ; i++){
+			printf("node-id %d degree %d\n", bc_order[i], deg[GJ2LOCJ(i)]);
+		bc_order [i] = i; //naive iniit 
 
+	}
+*/
+	thrust::sort_by_key(deg, deg + N, bc_order);
+	//after sort 
+/*	printf("\n\nAFTER SORT\n\n");
+	for (i =0 ; i < N ; i++){
+			printf("node-id %d degree %d\n", bc_order[i], deg[GJ2LOCJ(i)]);
 
+	}
+*/
+}
 
 __inline__ __device__	int warpReduceSum(int val) {
 	for (int offset = warpSize/2; offset > 0; offset /= 2) 
@@ -307,7 +336,7 @@ __inline__ __device__ int blockReduceSum(int val) {
   	return val;
 }
 
-__global__ void deviceReduceKernel(LOCINT *__restrict__ in, LOCINT* out, int N, int * __restrict__ cond) {
+__global__ void deviceReduceKernel(const LOCINT *__restrict__ in, LOCINT* out, int N, const int * __restrict__ cond) {
 	LOCINT sum = 0;
 //	int p= 0;
 	const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -326,8 +355,7 @@ __global__ void deviceReduceKernel(LOCINT *__restrict__ in, LOCINT* out, int N, 
 
 
 
-
-void pre_update_bc_cuda(LOCINT *reach, uint64_t v0, LOCINT *all){
+void pre_update_bc_cuda(LOCINT *reach, LOCINT v0, LOCINT *all){
 
 
 // all is the number of removed 1-degree in the same connected component 
@@ -361,7 +389,7 @@ __global__ void write_delta(const LOCINT *__restrict__ frt, const LOCINT *__rest
 		// Here delta is updated using row index
 		i = CUDA_MYLOCJ2LOCI(frt[tid]);
 		//sbuf[i] = rbuf[tid] * sigma[i] + reach[i]; // add reach[i]
-        sbuf[i] = rbuf[tid] * sigma[i];
+                sbuf[i] = rbuf[tid] * sigma[i];
 
 	    // Copy back the value into the send-receive buffer
 	    //srbuf[tid] = delta[i] ;
@@ -433,15 +461,13 @@ __global__ void scan_col(const LOCINT *__restrict__ row,  const LOCINT *__restri
 	#pragma unroll
 	for(int k = 1; k < ROWXTH; k++) {
 		if (tid+k >= nrow) break;
-		for(i[k]=i[k-1]; (i[k]+1 < ncol) && (tid+k) >= __ldg(&cbuf[i[k]+1]); i[k]++); // Here increment i[k]
+		for(i[k]=i[k-1]; (i[k]+1 < ncol) && (tid+k) >= cbuf[i[k]+1]; i[k]++); // Here increment i[k]
 	}
 
 	#pragma unroll
 	for(int k = 0; k < ROWXTH; k++) {
 		if (tid+k >= nrow) break;
-		c[k] = __ldg(&rbuf[i[k]]);
-		//c[k] = rbuf[i[k]];
-		//s[k] = rbuf_sig[i[k]];
+		c[k] = __ldg(&rbuf[i[k]]); 
 		s[k] = __ldg(&rbuf_sig[i[k]]);
 	} //c[k] is the predecessor, s[k] is its sigma
 
@@ -486,11 +512,11 @@ __global__ void scan_col(const LOCINT *__restrict__ row,  const LOCINT *__restri
 	return;
 }
 
-__global__ void scan_col_mono(const LOCINT *__restrict__ row,  const LOCINT *__restrict__ col, LOCINT nrow,
-			                	 const LOCINT *__restrict__ rbuf,
-								 const LOCINT *__restrict__ cbuf, LOCINT ncol,
-			                      LOCINT *msk, int *lvl, LOCINT* sig, int level,
-			                      LOCINT *sbuf, uint32_t *snum) {
+__global__ void scan_col_mono(const LOCINT *__restrict__ row,  const LOCINT *__restrict__ col, LOCINT nrow, 
+                                const LOCINT *__restrict__ rbuf, 
+                                const LOCINT *__restrict__ cbuf, LOCINT ncol, 
+                                LOCINT *msk, int *lvl, LOCINT* sig, int level, 
+                                LOCINT *sbuf, uint32_t *snum) {
 
 	// This processes ROWXTH elements together
 	LOCINT r[ROWXTH];
@@ -547,30 +573,28 @@ __global__ void scan_col_mono(const LOCINT *__restrict__ row,  const LOCINT *__r
 			uint32_t off = atomicInc(snum, 0xFFFFFFFF); // Offset // Increment + 1
 			// This is the GLOBAL VERTEX !!
 			sbuf[off] = r[k]; // Copy the new discovered vertex into the sbuf for sending
-  		    lvl[r[k]] = level; // Update level
+  		    	lvl[r[k]] = level; // Update level
 		}
 
 		if (__ldg(&lvl[r[k]]) == -1 || __ldg(&lvl[r[k]]) == level) { // Order in the OR is important!			// Update sigma
-			// Update sigma
+            // Update sigma
 			atomicAdd(sig + r[k], s[k]);
-        }
-
+                }
 
 	} // end for over k
 	return;
 }
 
-
-__global__ void scan_frt(const LOCINT *__restrict__ row,   const LOCINT *__restrict__ col, LOCINT nrow,
-			             const LOCINT *__restrict__ rbuf,  const LOCINT *__restrict__ cbuf, LOCINT ncol,
-			             const LOCINT *__restrict__ sigma, const float  *__restrict__ delta,
-			             const int *__restrict__ lvl, int depth, float *srbuf) {
+__global__ void scan_col_mono2(const LOCINT *__restrict__ row,  const LOCINT *__restrict__ col, LOCINT nrow, 
+                                const LOCINT *__restrict__ rbuf, 
+                                const LOCINT *__restrict__ cbuf, LOCINT ncol, 
+                                LOCINT *msk, int *lvl, LOCINT* sig, int level, 
+                                LOCINT *sbuf, uint32_t *snum) {
 
 	// This processes ROWXTH elements together
 	LOCINT r[ROWXTH];
 	LOCINT c[ROWXTH]; // Vertex in the current frontier
-	LOCINT i[ROWXTH];
-	float a;
+	LOCINT m[ROWXTH], q[ROWXTH], i[ROWXTH];
 
 	const uint32_t tid = (blockDim.x*blockIdx.x + threadIdx.x)*ROWXTH;
 
@@ -583,14 +607,14 @@ __global__ void scan_frt(const LOCINT *__restrict__ row,   const LOCINT *__restr
 	#pragma unroll
 	for(int k = 1; k < ROWXTH; k++) {
 		if (tid+k >= nrow) break;
-		for(i[k]=i[k-1]; (i[k]+1 < ncol) && (tid+k) >= __ldg(&cbuf[i[k]+1]); i[k]++); // Here increment i[k]
+		for(i[k]=i[k-1]; (i[k]+1 < ncol) && (tid+k) >= cbuf[i[k]+1]; i[k]++); // Here increment i[k]
 	}
 
 	#pragma unroll
 	for(int k = 0; k < ROWXTH; k++) {
 		if (tid+k >= nrow) break;
-		c[k] = __ldg(&rbuf[i[k]]);
-	} //c[k] is the vertex in the input buffer
+		c[k] = __ldg(&rbuf[i[k]]); 
+	} //c[k] is the predecessor, s[k] is its sigma
 
 	// Here r[k] corresponds to the row and from it I can determine the processor hproc
 	// col[c[k]] offset in the CSC where neightbour of c[k] starts
@@ -603,7 +627,79 @@ __global__ void scan_frt(const LOCINT *__restrict__ row,   const LOCINT *__restr
 	}
 
 	#pragma unroll
-	for (int k = 0; k < ROWXTH; k++) {
+	for(int k = 0; k < ROWXTH; k++) {
+		if (tid+k >= nrow) break;
+		m[k] = ((LOCINT)1) << (r[k]%BITS(msk));  // its mask value
+	}
+
+	#pragma unroll
+	for(int k = 0; k < ROWXTH; k++) {
+		if (tid+k >= nrow) break;
+		if (__ldg(&msk[r[k]/BITS(msk)])&m[k]) //continue;
+			q[k] = m[k]; // the if below will eval to false...
+		else
+			q[k] = atomicOr(msk+r[k]/BITS(msk), m[k]);
+
+		if (!(m[k]&q[k])) {  // New vertex
+			uint32_t off = atomicInc(snum, 0xFFFFFFFF); // Offset // Increment + 1
+			// This is the GLOBAL VERTEX !!
+			sbuf[off] = r[k]; // Copy the new discovered vertex into the sbuf for sending
+  		    	lvl[r[k]] = level; // Update level
+		}
+
+		const int l = __ldg(&lvl[r[k]]);
+		if (l == -1 || l == level) { // Order in the OR is important!			// Update sigma
+            // Update sigma
+			atomicAdd(sig + r[k], __ldg(&sig[c[k]]));
+                }
+
+	} // end for over k
+	return;
+}
+
+
+__global__ void scan_frt(const LOCINT *__restrict__ row,   const LOCINT *__restrict__ col, LOCINT nrow,
+			             const LOCINT *__restrict__ rbuf,  const LOCINT *__restrict__ cbuf, LOCINT ncol,
+			             const LOCINT *__restrict__ sigma, const float  *__restrict__ delta,
+			             const int *__restrict__ lvl, int depth, float *srbuf) {
+
+	// This processes ROWXTH elements together
+	LOCINT r[ROWXTHD];
+	LOCINT c[ROWXTHD]; // Vertex in the current frontier
+	LOCINT i[ROWXTHD];
+	float a;
+
+	const uint32_t tid = (blockDim.x*blockIdx.x + threadIdx.x)*ROWXTHD;
+
+	if (tid >= nrow) return;
+
+	// Use binary search to calculate predecessor position in the rbuf array
+	i[0] = bmaxlt(cbuf, /*(tid<ncol)?tid+1:*/ncol, tid);
+
+	for(; (i[0]+1 < ncol) && (tid+0) >= cbuf[i[0]+1]; i[0]++); // Here increment i[0]
+	#pragma unroll
+	for(int k = 1; k < ROWXTHD; k++) {
+		if (tid+k >= nrow) break;
+		for(i[k]=i[k-1]; (i[k]+1 < ncol) && (tid+k) >= cbuf[i[k]+1]; i[k]++); // Here increment i[k]
+	}
+
+	#pragma unroll
+	for(int k = 0; k < ROWXTHD; k++) {
+		if (tid+k >= nrow) break;
+		c[k] = rbuf[i[k]];  } //c[k] is the vertex in the input buffer
+
+	// Here r[k] corresponds to the row and from it I can determine the processor hproc
+	// col[c[k]] offset in the CSC where neightbour of c[k] starts
+	// row[col[c[k]] first neightbour
+	// r[k] this is the visited vertex
+	#pragma unroll
+	for(int k = 0; k < ROWXTHD; k++) {
+		if (tid+k >= nrow) break;
+		r[k] = row[col[c[k]]+(tid+k)-cbuf[i[k]]];  // new vertex
+	}
+
+	#pragma unroll
+	for (int k = 0; k < ROWXTHD; k++) {
 		if (tid+k >= nrow) break;
 
 		if (lvl[r[k]] == depth+1) { // this is a successor
@@ -617,18 +713,21 @@ __global__ void scan_frt(const LOCINT *__restrict__ row,   const LOCINT *__restr
 	return;
 }
 
+
+
+
 __global__ void scan_frt_mono(const LOCINT *__restrict__ row,   const LOCINT *__restrict__ col, LOCINT nrow,
 			                  const LOCINT *__restrict__ rbuf,  const LOCINT *__restrict__ cbuf, LOCINT ncol,
 			                  const LOCINT *__restrict__ sigma, float  *delta,
 			                  const int *__restrict__ lvl, int depth) {
 
 	// This processes ROWXTH elements together
-	LOCINT r[ROWXTH];
-	LOCINT c[ROWXTH]; // Vertex in the current frontier
-	LOCINT i[ROWXTH];
+	LOCINT r[ROWXTHD];
+	LOCINT c[ROWXTHD]; // Vertex in the current frontier
+	LOCINT i[ROWXTHD];
 	float a;
 
-	const uint32_t tid = (blockDim.x*blockIdx.x + threadIdx.x)*ROWXTH;
+	const uint32_t tid = (blockDim.x*blockIdx.x + threadIdx.x)*ROWXTHD;
 
 	if (tid >= nrow) return;
 
@@ -637,36 +736,35 @@ __global__ void scan_frt_mono(const LOCINT *__restrict__ row,   const LOCINT *__
 
 	for(; (i[0]+1 < ncol) && (tid+0) >= cbuf[i[0]+1]; i[0]++); // Here increment i[0]
 	#pragma unroll
-	for(int k = 1; k < ROWXTH; k++) {
+	for(int k = 1; k < ROWXTHD; k++) {
 		if (tid+k >= nrow) break;
 		for(i[k]=i[k-1]; (i[k]+1 < ncol) && (tid+k) >= __ldg(&cbuf[i[k]+1]); i[k]++); // Here increment i[k]
 	}
 
 	#pragma unroll
-	for(int k = 0; k < ROWXTH; k++) {
+	for(int k = 0; k < ROWXTHD; k++) {
 		if (tid+k >= nrow) break;
-		c[k] = __ldg(&rbuf[i[k]]);
-	} //c[k] is the vertex in the input buffer
+		c[k] = __ldg(&rbuf[i[k]]);  } //c[k] is the vertex in the input buffer
 
 	// Here r[k] corresponds to the row and from it I can determine the processor hproc
 	// col[c[k]] offset in the CSC where neightbour of c[k] starts
 	// row[col[c[k]] first neightbour
 	// r[k] this is the visited vertex
 	#pragma unroll
-	for(int k = 0; k < ROWXTH; k++) {
+	for(int k = 0; k < ROWXTHD; k++) {
 		if (tid+k >= nrow) break;
 		r[k] = row[col[c[k]]+(tid+k)-cbuf[i[k]]];  // new vertex
 	}
 
 	#pragma unroll
-	for (int k = 0; k < ROWXTH; k++) {
+	for (int k = 0; k < ROWXTHD; k++) {
 		if (tid+k >= nrow) break;
 
 		if (lvl[r[k]] == depth+1) { // this is a successor
 			// sigma and delta are indexed by row
-			a = (delta[r[k]] + 1)/sigma[r[k]]*sigma[c[k]];
+			a = (__ldg(&delta[r[k]]) + 1)/sigma[r[k]]*sigma[c[k]];
 			// IN SINGLE DEVICE we multiply a * sigma[c[k]]
-		    // Need to add into the SRbuffer using the same index used to access rbuf
+		    	// Need to add into the SRbuffer using the same index used to access rbuf
 			atomicAdd(delta+c[k], a);
 		}
 	} // end for over k
@@ -689,9 +787,7 @@ __global__ void append_row(const LOCINT *__restrict__ row,  const LOCINT *__rest
 	m = ((LOCINT)1) << (r%BITS(msk));
 
 	if (!(msk[r/BITS(msk)]&m)) {  // Check if the vertex was already visited
-
 		q = atomicOr(msk+r/BITS(msk), m);  // Mark visited
-
 		if (!(m&q)) { // Check if the vertex was already visited
 			uint32_t off = atomicInc(&dnfrt, 0xFFFFFFFF);
 			frt[off] = r;  // Still Global
@@ -767,6 +863,7 @@ void set_mlp_cuda(LOCINT row, int level, int sigma) {
 
 	LOCINT v;
 	MY_CUDA_CHECK( cudaMemcpy(&v, d_msk+row/BITS(d_msk), sizeof(v), cudaMemcpyDeviceToHost) );
+
 	v |= (1ULL<<(row%BITS(d_msk))); 
 	MY_CUDA_CHECK( cudaMemcpy(d_msk+row/BITS(d_msk), &v, sizeof(*d_msk), cudaMemcpyHostToDevice) );
 
@@ -839,7 +936,10 @@ __global__ void compact(LOCINT *col, LOCINT *row, LOCINT *deg, LOCINT *msk) {
  */
 LOCINT scan_frt_csc_cuda(const LOCINT *__restrict__ frt, int ncol, int depth, float *hSRbuf) {
 
+#ifdef THRUST
+
 	static	thrust::device_ptr<LOCINT> d_val(d_cbuf);
+#endif
 	LOCINT	i;
 	int blocks, nrow=0;
 	float	et=0;
@@ -867,7 +967,11 @@ LOCINT scan_frt_csc_cuda(const LOCINT *__restrict__ frt, int ncol, int depth, fl
 	nrow = i;
 
 	// Prefix sum to count how many threads to launch
+#ifdef THRUST
 	thrust::exclusive_scan(d_val, d_val+ncol, d_val);
+#else
+	cub::DeviceScan::ExclusiveSum(d_cubtmp, cubtmp_sz, d_cbuf, d_cbuf, ncol);
+#endif
 	MY_CUDA_CHECK( cudaMemcpy(&i, d_cbuf+ncol-1, sizeof(*d_cbuf), cudaMemcpyDeviceToHost) );
 
 	nrow += i;
@@ -880,7 +984,7 @@ LOCINT scan_frt_csc_cuda(const LOCINT *__restrict__ frt, int ncol, int depth, fl
 
 	MY_CUDA_CHECK( cudaEventRecord(start, 0) );
 
-	blocks = (((nrow+ROWXTH-1)/ROWXTH)+THREADS-1)/THREADS;
+	blocks = (((nrow+ROWXTHD-1)/ROWXTHD)+THREADS-1)/THREADS;
 	//dump_device_farray2(d_delta, row_pp, "d_delta");
 
 	scan_frt<<<blocks, THREADS>>>(d_row, d_col, nrow, d_rbuf, d_cbuf, ncol,
@@ -917,7 +1021,6 @@ LOCINT scan_frt_csc_cuda_mono(int offset, int ncol, int depth) {
 	LOCINT *d_ncbuf;
 
 	TIMER_START(1);
-
 	if (!ncol) {
 		TIMER_STOP(1);
 		goto out;
@@ -927,7 +1030,11 @@ LOCINT scan_frt_csc_cuda_mono(int offset, int ncol, int depth) {
 	nrow = tlvl[depth+1];
 	d_ncbuf = d_cbuf_start+offset;
 #else
+
+#ifdef THRUST
+
 	static	thrust::device_ptr<LOCINT> d_val(d_cbuf);
+#endif
 	// calculate degree for each vertex in frt
 	read_edge_count<<<(ncol+THREADS-1)/THREADS, THREADS>>>(d_deg, d_frt_start+offset, ncol, d_cbuf);
 
@@ -935,7 +1042,11 @@ LOCINT scan_frt_csc_cuda_mono(int offset, int ncol, int depth) {
 	nrow = i;
 
 	// Prefix sum to count how many threads to launch
+#ifdef THRUST
 	thrust::exclusive_scan(d_val, d_val+ncol, d_val);
+#else
+	cub::DeviceScan::ExclusiveSum(d_cubtmp, cubtmp_sz, d_cbuf, d_cbuf, ncol);
+#endif
 	MY_CUDA_CHECK( cudaMemcpy(&i, d_cbuf+ncol-1, sizeof(*d_cbuf), cudaMemcpyDeviceToHost) );
 
 	nrow += i;
@@ -950,7 +1061,7 @@ LOCINT scan_frt_csc_cuda_mono(int offset, int ncol, int depth) {
 
 	MY_CUDA_CHECK( cudaEventRecord(start, 0) );
 
-	blocks = (((nrow+ROWXTH-1)/ROWXTH)+THREADS-1)/THREADS;
+	blocks = (((nrow+ROWXTHD-1)/ROWXTHD)+THREADS-1)/THREADS;
 	//dump_device_farray2(d_delta, row_pp, "d_delta");
 
 	// Store result directly into d_delta
@@ -968,6 +1079,10 @@ out:
 
 }
 
+
+
+
+
 /**
  */
 LOCINT scan_col_csc_cuda_mono(int ncol, int level) {
@@ -976,11 +1091,19 @@ LOCINT scan_col_csc_cuda_mono(int ncol, int level) {
 	LOCINT	i;
 	float	et=0;
 	LOCINT	nfrt=0, nrow=0;
-
 #ifdef ONEPREFIX
+
+#ifdef THRUST
 	thrust::device_ptr<LOCINT> d_val(d_cbuf);
+#endif
+	int *d_out = NULL;
+
 #else
-    static thrust::device_ptr<LOCINT> d_val(d_cbuf);
+
+#ifdef THRUST
+    	static thrust::device_ptr<LOCINT> d_val(d_cbuf);
+#endif
+
 #endif
 
 	TIMER_DEF(1);
@@ -998,8 +1121,13 @@ LOCINT scan_col_csc_cuda_mono(int ncol, int level) {
 
 	nrow = i;
 
+
 	// Prefix sum to count how many threads to launch
+#ifdef THRUST
 	thrust::exclusive_scan(d_val, d_val+ncol, d_val);
+#else
+	cub::DeviceScan::ExclusiveSum(d_cubtmp, cubtmp_sz, d_cbuf, d_cbuf, ncol);
+#endif
 	MY_CUDA_CHECK( cudaMemcpy(&i, d_cbuf+ncol-1, sizeof(*d_cbuf), cudaMemcpyDeviceToHost) );
 	nrow += i;
 
@@ -1020,8 +1148,8 @@ LOCINT scan_col_csc_cuda_mono(int ncol, int level) {
 	//dump_uarray2(&nrow,1,"scan_col nrow");
 	//dump_device_array2(d_lvl, row_pp, "d_lvl");
 
-	scan_col_mono<<<blocks, THREADS>>>(d_row, d_col, nrow, d_frt, d_cbuf, ncol, d_msk, d_lvl,
-									   d_sig, level, d_frt+ncol, d_snum);
+	scan_col_mono2<<<blocks, THREADS>>>(d_row, d_col, nrow, d_frt, d_cbuf, ncol, d_msk, d_lvl, 
+                                        d_sig, level, d_frt+ncol, d_snum);
 
 	// Here we have d_sbuf updated with the new discovered vertices and d_tmp_sig with the local value of the accumulated sigma
 	MY_CUDA_CHECK( cudaEventRecord(stop, 0) );
@@ -1059,7 +1187,9 @@ LOCINT scan_col_csc_cuda(LOCINT *rbuf, LOCINT ld, int *rnum, int np, LOCINT *sbu
 	LOCINT	i,k;
 	float	et=0;
 	LOCINT	nfrt=0, ncol=0, nrow=0;
+#ifdef THRUST
 	static	thrust::device_ptr<LOCINT> d_val(d_cbuf);
+#endif
 
 	TIMER_DEF(1);
 	TIMER_DEF(2);
@@ -1108,7 +1238,11 @@ LOCINT scan_col_csc_cuda(LOCINT *rbuf, LOCINT ld, int *rnum, int np, LOCINT *sbu
 	nrow = i;
 
 	// Prefix sum to count how many threads to launch
+#ifdef THRUST
 	thrust::exclusive_scan(d_val, d_val+ncol, d_val);
+#else
+	cub::DeviceScan::ExclusiveSum(d_cubtmp, cubtmp_sz, d_cbuf, d_cbuf, ncol);
+#endif
 	MY_CUDA_CHECK( cudaMemcpy(&i, d_cbuf+ncol-1, sizeof(*d_cbuf), cudaMemcpyDeviceToHost) );
 	nrow += i;
 	//dump_device_uarray2(d_cbuf, MAX(col_bl, C), "d_cbuf 2");
@@ -1281,19 +1415,15 @@ void set_get_overlap(LOCINT *sigma, int *lvl)
 	cudaEventRecord(stop, stream[0]);
 
 	cudaEventSynchronize(start);
-PUSH_RANGE("reduce sigma",3)
 	//MPI_Allreduce(MPI_IN_PLACE, sigma, row_pp, LOCINT_MPI, MPI_SUM, Row_comm);
     MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, sigma, row_bl, LOCINT_MPI, Row_comm);
-POP_RANGE
 	MY_CUDA_CHECK( cudaMemcpyAsync(d_sig, sigma, row_pp*sizeof(*sigma), cudaMemcpyHostToDevice, stream[1]) ); 
 	cudaEventSynchronize(stop);
-PUSH_RANGE("reduce lvl",3)
 	//MPI_Allreduce(MPI_IN_PLACE, lvl, row_pp, MPI_INT, MPI_SUM, Row_comm);
 	MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, lvl, row_bl, MPI_INT, Row_comm);
-POP_RANGE 
 	MY_CUDA_CHECK( cudaMemcpyAsync(d_lvl, lvl, row_pp*sizeof(*lvl), cudaMemcpyHostToDevice, stream[1]) );
 	
-// cudaEventRecord(blahblah, 0);i
+//        cudaEventRecord(blahblah, 0);i	
 
 }
 
@@ -1336,6 +1466,10 @@ void get_sigma(LOCINT *sigma) {
 
 void get_bc(float *bc) {
 	MY_CUDA_CHECK( cudaMemcpy(bc, d_bc, row_pp*sizeof(*d_bc), cudaMemcpyDeviceToHost) );
+}
+
+void get_delta(float *delta){
+	MY_CUDA_CHECK( cudaMemcpy(delta, d_delta, row_pp*sizeof(*d_delta), cudaMemcpyDeviceToHost) );
 }
 
 void set_sigma(LOCINT *sigma) {
@@ -1414,12 +1548,12 @@ void setcuda(uint64_t ned, LOCINT *col, LOCINT *row, LOCINT reach_v0) {
 	d_cbuf = d_cbuf_start;
 #endif
 
-
 	d_frt = d_frt_start;
-
 
 	return;
 }
+
+
 
 size_t initcuda(uint64_t ned, LOCINT *col, LOCINT *row) {
 
@@ -1437,16 +1571,17 @@ size_t initcuda(uint64_t ned, LOCINT *col, LOCINT *row) {
 	set_degree<<<(col_bl+THREADS-1)/THREADS, THREADS>>>(d_col, d_deg, col_bl);
 
 	if (!mono) { // Run Multi-GPU code
-		d_rbuf =       (LOCINT *)CudaMallocSet(MAX(col_bl, row_pp)*sizeof(*d_rbuf), 0);
-		d_rbuf_sig =   (LOCINT *)CudaMallocSet(MAX(col_bl, row_pp)*sizeof(*d_rbuf_sig), 0);
-		d_sbuf_sig =   (LOCINT *)CudaMallocSet(MAX(row_bl,row_pp)*sizeof(*d_sbuf_sig), 0);
-		d_tmp_sig =    (LOCINT *)CudaMallocSet(row_pp*sizeof(*d_tmp_sig), 0);
-		d_fsbuf =      (float *)CudaMallocSet(MAX(row_pp, col_bl)*sizeof(*d_fsbuf), 0);
-		d_frbuf =      (float *)CudaMallocSet(MAX(row_pp, col_bl)*sizeof(*d_frbuf), 0);
+		d_rbuf =      (LOCINT *)CudaMallocSet(MAX(col_bl, row_pp)*sizeof(*d_rbuf), 0);
+		d_rbuf_sig =  (LOCINT *)CudaMallocSet(MAX(col_bl, row_pp)*sizeof(*d_rbuf_sig), 0);
+		d_sbuf_sig =  (LOCINT *)CudaMallocSet(MAX(row_bl,row_pp)*sizeof(*d_sbuf_sig), 0);
+		d_tmp_sig =   (LOCINT *)CudaMallocSet(row_pp*sizeof(*d_tmp_sig), 0);
+		d_fsbuf =     (float *)CudaMallocSet(MAX(row_pp, col_bl)*sizeof(*d_fsbuf), 0);
+		d_frbuf =     (float *)CudaMallocSet(MAX(row_pp, col_bl)*sizeof(*d_frbuf), 0);
 		d_cbuf_start = (LOCINT *)CudaMallocSet(MAX(col_bl, C)*sizeof(*d_cbuf_start), 0);
 	} else {
 #ifdef ONEPREFIX
 		d_cbuf_start = (LOCINT *)CudaMallocSet(MAX(row_bl,row_pp)*sizeof(*d_cbuf_start), 0);
+
 #else
 		d_cbuf_start = (LOCINT *)CudaMallocSet(MAX(col_bl, C)*sizeof(*d_cbuf_start), 0);
 #endif
@@ -1467,15 +1602,27 @@ size_t initcuda(uint64_t ned, LOCINT *col, LOCINT *row) {
 	
 	d_delta =     (float *)CudaMallocSet(row_pp*sizeof(*d_delta), 0);
 	d_bc    =     (float *)CudaMallocSet(row_pp*sizeof(*d_bc), 0);
-    d_reach =     (LOCINT*)CudaMallocSet(row_pp*sizeof(*d_reach), 0);
+        d_reach =     (LOCINT*)CudaMallocSet(row_pp*sizeof(*d_reach), 0);
 
+
+
+#ifndef THRUST
+	//CUB 
+	size_t  bytes=0;
+	cub::DeviceScan::ExclusiveSum(NULL, bytes, d_cbuf, d_cbuf, MAX(col_bl, C));	
+//	cub::DeviceScan::ExclusiveSum(NULL, bytes, d_cbuf, d_cbuf, row_pp);	
+
+	cubtmp_sz = bytes;
+
+	d_cubtmp = (LOCINT *)CudaMallocSet(cubtmp_sz, 0);
+#endif
 	printf("ROWBL = %i - ROWPP = %i\n",row_bl,row_pp);
 
 	MY_CUDA_CHECK( cudaEventCreate(&start) );
-    MY_CUDA_CHECK( cudaEventCreate(&stop) );
+    	MY_CUDA_CHECK( cudaEventCreate(&stop) );
 
 	MY_CUDA_CHECK( cudaStreamCreate(stream+0) );
-    MY_CUDA_CHECK( cudaStreamCreate(stream+1) );
+    	MY_CUDA_CHECK( cudaStreamCreate(stream+1) );
 	MY_CUDA_CHECK( cudaMemcpyToSymbol(dN, &N, sizeof(dN),  0, cudaMemcpyHostToDevice) );
 	MY_CUDA_CHECK( cudaMemcpyToSymbol(dC, &C, sizeof(dC),  0, cudaMemcpyHostToDevice) );
 	MY_CUDA_CHECK( cudaMemcpyToSymbol(dR, &R, sizeof(dR),  0, cudaMemcpyHostToDevice) );
@@ -1485,26 +1632,25 @@ size_t initcuda(uint64_t ned, LOCINT *col, LOCINT *row) {
 	MY_CUDA_CHECK( cudaMemcpyToSymbol(dcol_bl, &col_bl, sizeof(dcol_bl),  0, cudaMemcpyHostToDevice) );
 	MY_CUDA_CHECK( cudaMemcpyToSymbol(drow_pp, &row_pp, sizeof(drow_pp),  0, cudaMemcpyHostToDevice) );
 
-	MY_CUDA_CHECK( cudaFuncSetCacheConfig(read_edge_count, cudaFuncCachePreferL1) );
-       MY_CUDA_CHECK( cudaFuncSetCacheConfig(update_bc, cudaFuncCachePreferL1) );
-       MY_CUDA_CHECK( cudaFuncSetCacheConfig(deviceReduceKernel, cudaFuncCachePreferL1) );
+        MY_CUDA_CHECK( cudaFuncSetCacheConfig(read_edge_count, cudaFuncCachePreferL1) );
+        MY_CUDA_CHECK( cudaFuncSetCacheConfig(update_bc, cudaFuncCachePreferL1) );
+        MY_CUDA_CHECK( cudaFuncSetCacheConfig(deviceReduceKernel, cudaFuncCachePreferL1) );
 
         if (!mono){
 
-	MY_CUDA_CHECK( cudaFuncSetCacheConfig(append_sigma, cudaFuncCachePreferL1) );
-	MY_CUDA_CHECK( cudaFuncSetCacheConfig(scan_frt, cudaFuncCachePreferL1) );
-	MY_CUDA_CHECK( cudaFuncSetCacheConfig(scan_col, cudaFuncCachePreferL1) );
-	MY_CUDA_CHECK( cudaFuncSetCacheConfig(write_delta, cudaFuncCachePreferL1) );
-	MY_CUDA_CHECK( cudaFuncSetCacheConfig(append_row, cudaFuncCachePreferL1) );
-	MY_CUDA_CHECK( cudaFuncSetCacheConfig(write_sigma, cudaFuncCachePreferL1) );
-    }
-    else{
+              MY_CUDA_CHECK( cudaFuncSetCacheConfig(append_sigma, cudaFuncCachePreferL1) );
+              MY_CUDA_CHECK( cudaFuncSetCacheConfig(scan_frt, cudaFuncCachePreferL1) );
+              MY_CUDA_CHECK( cudaFuncSetCacheConfig(scan_col, cudaFuncCachePreferL1) );
+              MY_CUDA_CHECK( cudaFuncSetCacheConfig(write_delta, cudaFuncCachePreferL1) );
+              MY_CUDA_CHECK( cudaFuncSetCacheConfig(append_row, cudaFuncCachePreferL1) );
+              MY_CUDA_CHECK( cudaFuncSetCacheConfig(write_sigma, cudaFuncCachePreferL1) );
+        }
+        else{
         // set cache mono
             MY_CUDA_CHECK( cudaFuncSetCacheConfig(scan_frt_mono, cudaFuncCachePreferL1) );
             MY_CUDA_CHECK( cudaFuncSetCacheConfig(scan_col_mono, cudaFuncCachePreferL1) );
 
-    }
-
+        }
 
 	return tot_dev_mem;
 }
@@ -1517,6 +1663,7 @@ void fincuda() {
 	MY_CUDA_CHECK( cudaFree(d_row) );
 	MY_CUDA_CHECK( cudaFree(d_rbuf) );
 	MY_CUDA_CHECK( cudaFree(d_cbuf_start) );
+
 	MY_CUDA_CHECK( cudaFree(d_sbuf) );
 	MY_CUDA_CHECK( cudaFree(d_snum) );
 	MY_CUDA_CHECK( cudaFree(d_msk) );
@@ -1531,12 +1678,16 @@ void fincuda() {
 	MY_CUDA_CHECK( cudaFree(d_fsbuf) );
 	MY_CUDA_CHECK( cudaFree(d_delta) );
 	MY_CUDA_CHECK( cudaFree(d_bc) );
-
+#ifndef THRUST
+	MY_CUDA_CHECK( cudaFree(d_cubtmp) );
+#endif
 	MY_CUDA_CHECK( cudaEventDestroy(start) );
-    MY_CUDA_CHECK( cudaEventDestroy(stop) );
+        MY_CUDA_CHECK( cudaEventDestroy(stop) );
 
 	MY_CUDA_CHECK( cudaStreamDestroy(stream[0]) );
 	MY_CUDA_CHECK( cudaStreamDestroy(stream[1]) );
+        
 
+        
 	return;
 }
