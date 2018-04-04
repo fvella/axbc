@@ -3,9 +3,9 @@ LD=gcc
 EXEC=axbc2d
 
 #CUDA_PATH use CUDATOOLKIT_HOME for CRAY
-CUDA_HOME=/usr/local/cuda
-MPI_HOME=/usr/lib/openmpi
-
+CUDA_HOME=
+MPI_HOME=
+GRAPH_GEN_LIB=
 
 
 
@@ -15,7 +15,7 @@ CUDACFLAGS=-m64 -c -O3  --ptxas-options=-v -DCUDA  -DONEDEGREE --use_fast_math
 
 
 CFLAGS=-g -W -Wall -Wno-unused-function -Wno-unused-parameter -c -O3 -DMPI -DCUDA  -L$(MPI_HOME)/lib64 -lmpi   -I$(CUDA_HOME)/include
-LDFLAGS = -L$(MPI_HOME)/lib64 -lmpi -L$(CUDA_HOME)/lib64 -lcudart -lstdc++ ../generator/libgraph_generator_mpi.a  -lm -Wno-deprecated-gpu-targets
+LDFLAGS = -L$(MPI_HOME)/lib64 -lmpi -L$(CUDA_HOME)/lib64 -lcudart -lstdc++ ${GRAPH_GEN_LIB}/libgraph_generator_mpi.a  -lm -Wno-deprecated-gpu-targets
 
 OBJ=axbc2d.o cuda_kernels.o adtp.o
 
