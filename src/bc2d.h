@@ -3,7 +3,7 @@
 
 #define OVERLAP 1
 #define ONEPREFIX 1
-#define THRUST 1
+//#define THRUST 1
 //#define _LARGE_LVERTS_NUM
 #ifdef	_LARGE_LVERTS_NUM
 //#define LOCINT	   uint64_t
