@@ -23,10 +23,10 @@ OBJ=axbc2d.o cuda_kernels.o adtp.o
 axbc: ${OBJ}
 	${LD} -o $(DEST_DIR)$(EXEC) ${OBJ} ${LDFLAGS}
 
-.c.o:; $(CC) $(CFLAGS) -I$(MPI_HOME)/include    $< -o $@
+.c.o:; $(CC) $(CFLAGS) -I$(MPI_HOME)/include  -I$(CUB_INCLUDE)  $< -o $@
 
 %.o: %.cu
-	$(CUDACC) $(CUDACFLAGS) $(CUDA_ARCH) -I$(MPI_HOME)/include $<
+	$(CUDACC) $(CUDACFLAGS) $(CUDA_ARCH) -I$(MPI_HOME)/include -I$(CUB_INCLUDE)  $<
 clean:
 	rm -rf *.o $(DEST_DIR)$(EXEC)
 
