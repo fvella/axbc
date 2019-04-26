@@ -2147,6 +2147,9 @@ int main(int argc, char *argv[]) {
 	int *hFnum_v1 = NULL; /* offsets of ventices in the frontier for each level */
 
 	LOCINT *degree=NULL; // Degree for all vertices in the same column
+       	LOCINT *degree2=NULL; // Degree for all vertices in the same column
+        
+
 	LOCINT *sigma=NULL;  // Sigma (number of SP)
 	LOCINT *frt_sigma=NULL;  // Sigma (number of SP)
 
@@ -2564,7 +2567,7 @@ int main(int argc, char *argv[]) {
 	//Approx BC
 	// if distribution == 6 mixture we need all 
 	dist0 =  (float*)CudaMallocHostSet(sizeof(float*),0); ///is UNIFORM DISTRIBUTION TAKE A SINGLE VALUE in (0,1)
-	if (distribution == 1 || distribution == 6){ dist_deg  = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*));}// Degree distribution... Store in scan mode
+	if (distribution == 1 || distribution == 6){ dist_deg  = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*)); }// Degree distribution... Store in scan mode
 	if (distribution == 2 || distribution == 6){ cc_lcc  = (float*)Malloc(col_bl*sizeof(float*));   dist_lcc = (float*)Malloc(col_bl*sizeof(float*));}// LCC
 	if (distribution == 3 || distribution == 6){ dist_bc   = (float*)Malloc(row_pp*sizeof(float*));  }// BC... Strong Memory
 	if (distribution == 4 || distribution == 6){ dist_delta= (float*)Malloc(row_pp*sizeof(float*));  }// DELATA LAZI APPROACH
@@ -2585,11 +2588,15 @@ int main(int argc, char *argv[]) {
 	}
 	
     	get_deg(degree);
+        
 	// Calculate degree
 	MPI_Allreduce(MPI_IN_PLACE, degree, col_bl, MPI_INT, MPI_SUM, Col_comm);
-
+        degree2 = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*));
+        for (i = 0; i<col_bl; i++){
+               degree2[i]= pow(degree[i],2);
+               printf("%u %u\n", degree[i], degree2[i]);
+        }
 	init_bc_1degree_device(reach);
-
 	if (analyze_degree == 1)
 		analyze_deg(degree, col_bl);
 	// Allocate BitMask to store visited unique vertices ???
@@ -3173,6 +3180,8 @@ int main(int argc, char *argv[]) {
 	CudaFreeHost(frt);
 	CudaFreeHost(frt_all);
 	CudaFreeHost(degree);
+        CudaFreeHost(degree2);
+
 	CudaFreeHost(frt_sigma);
 	CudaFreeHost(hFnum);
 	CudaFreeHost(delta);
