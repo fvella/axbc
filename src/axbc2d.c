@@ -1780,6 +1780,97 @@ void usage(const char *pname) {
 //	 return; 
 //}
 // TO DO 
+void sum_deg_neigh_func(LOCINT *col, LOCINT *row, LOCINT *output){
+	LOCINT i = 0;
+	if (R > 1) fprintf(stdout,"Get the sum of the degree of connected vertices is implemented in 1D schema, R must be equal to 1\n");
+	if (R == 1 ){
+		int dest_get;
+		LOCINT jj = 0;
+		LOCINT vv = 0;
+		LOCINT vvv = 0;
+		LOCINT counter = 0;
+		LOCINT gvid = 0;
+		LOCINT r_off[2] ={0, 0} ;
+		LOCINT row_offset, off_start = 0;
+		MPI_Win win_col;
+		MPI_Win win_row;
+		LOCINT sum_deg = 0;
+//		int rs = 0;
+//		MPI_Comm_size( Row_comm, &rs ); 
+//		printf("GESOOOOOOOOOOOOOOOOOOOOOOOO %d\n", rs);
+		MPI_Win_create(col, col_bl*sizeof(LOCINT), sizeof(LOCINT), MPI_INFO_NULL, Row_comm, &win_col);
+		MPI_Win_create(row, col[col_bl]*sizeof(LOCINT), sizeof(LOCINT), MPI_INFO_NULL, Row_comm, &win_row);
+		
+/*		for (i = 0; i < col_bl; i++){
+			col[i] = i;
+		}	*/
+		MPI_Win_lock_all(0, win_col);
+		MPI_Win_lock_all(0, win_row);
+//		LOCINT *adj_v = (LOCINT*)malloc(row_pp*sizeof(LOCINT));
+		LOCINT *adj_local = (LOCINT*)CudaMallocHostSet(row_pp*sizeof(LOCINT), 0);
+	
+//		printf("locint %d and LOCINTMPI %d\n", sizeof(LOCINT),sizeof(LOCINT_MPI));	
+		for (i = 0; i < col_bl; i++){
+			row_offset = col[i+1] - col[i];
+//			fprintf(stdout,"proc-%d (%d,%d)  Node %ld (degree %d) -> ",myid, myrow, mycol, LOCJ2GJ(i), row_offset );
+			memcpy(adj_local, &row[col[i]], row_offset*sizeof(LOCINT));	
+			//fprintf(stdout,"%u ",/*LOCI2GI*/( row[col[i]+jj]));	
+			//printf("Calcolo lcc di %u: ",LOCJ2GJ(i));				
+			counter = 0;
+			for (jj = 0; jj < row_offset; jj++){
+				//break;		
+				gvid =LOCI2GI(row[col[i]+jj]); // offset gvid in proc dest_get is gvid % C
+				dest_get = VERT2PROC(gvid);
+				off_start = gvid % col_bl ;
+				//continue;
+				if (dest_get != myid ){	
+					MPI_Get(r_off,2, MPI_UINT32_T, dest_get, off_start, 2, MPI_UINT32_T, win_col);
+					MPI_Win_flush(dest_get, win_col);
+                                        // to add in order to get the sum of remote degree   r_off[1]-r_off[0];
+//					fprintf(stdout,"*%u with OFFSET start in COL[%u] = %u - OFFSET REMOTO IN ROW [%u %u] prc-remote %d\n",gvid,off_start, col[off_start],r_off[0], r_off[1], dest_get);
+
+//					MPI_Get(adj_v, r_off[1]-r_off[0], MPI_UINT32_T, dest_get, r_off[0], r_off[1]-r_off[0], MPI_UINT32_T, win_row);
+//					MPI_Win_flush(dest_get, win_row);
+					//printf("\(");
+					//for (vv = 0; vv < r_off[1]-r_off[0]; vv++){
+					//	fprintf(stdout,"%u ", adj_v[vv]);
+					//}
+//					printf(")\n");
+				}else{
+					r_off[0] = col[off_start];
+					r_off[1] = col[off_start+1];
+//					fprintf(stdout,"*%u with OFFSET start in COL[%u] = %u - OFFSET LOCAL IN ROW [%u %u] prc-local %d\n",gvid,off_start, col[off_start],r_off[0], r_off[1], dest_get);
+//					memcpy(adj_v, &row[r_off[0]], (r_off[1]-r_off[0])*sizeof(LOCINT));
+
+				}
+                                counter += r_off[1]-r_off[0];
+
+			}
+						
+			output[i] = counter; 
+			//printf("lcc di %u is %f\n", LOCJ2GJ(i),lcc);
+//			printf("\n");
+//			for (vv = 0; vv < row_offset; vv++){
+//					printf("conferma conferma %u\n", adj_local[vv]);
+//			}
+		}
+		MPI_Win_unlock_all(win_col);
+		MPI_Win_unlock_all(win_row);
+		MPI_Win_free(&win_col);
+		MPI_Win_free(&win_row);
+		CudaFreeHost(adj_local);
+	}
+/*	int pp = 0;
+	for (i = 0; i < col_bl; i++){
+		pp = col[i+1]- col[i];
+		fprintf(stdout,"proc-%d Node %u size %d lcc: %f\n",myid, LOCJ2GJ(i), pp,output[i]);
+//			printf("%u ", row[i]);
+
+	}
+*/
+
+}
+
 void lcc_func(LOCINT *col, LOCINT *row, float *output){
 	LOCINT i = 0;
 	if (R > 1) fprintf(stdout,"LCC is implemented in 1D schema, R must be equal to 1\n");
@@ -2192,6 +2283,7 @@ int main(int argc, char *argv[]) {
 	LOCINT *approx_vertices =NULL;
 	float *dist0=NULL;
 	LOCINT *dist_deg=NULL;
+        LOCINT *sum_deg_neigh=NULL;
 	float *dist_lcc=NULL;
 	float *cc_lcc =NULL;
 	float *dist_bc = NULL;
@@ -2567,7 +2659,7 @@ int main(int argc, char *argv[]) {
 	//Approx BC
 	// if distribution == 6 mixture we need all 
 	dist0 =  (float*)CudaMallocHostSet(sizeof(float*),0); ///is UNIFORM DISTRIBUTION TAKE A SINGLE VALUE in (0,1)
-	if (distribution == 1 || distribution == 6){ dist_deg  = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*)); }// Degree distribution... Store in scan mode
+	if (distribution == 1 || distribution == 6){ dist_deg  = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*)); sum_deg_neigh = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*));}// Degree distribution... Store in scan mode
 	if (distribution == 2 || distribution == 6){ cc_lcc  = (float*)Malloc(col_bl*sizeof(float*));   dist_lcc = (float*)Malloc(col_bl*sizeof(float*));}// LCC
 	if (distribution == 3 || distribution == 6){ dist_bc   = (float*)Malloc(row_pp*sizeof(float*));  }// BC... Strong Memory
 	if (distribution == 4 || distribution == 6){ dist_delta= (float*)Malloc(row_pp*sizeof(float*));  }// DELATA LAZI APPROACH
@@ -2594,7 +2686,7 @@ int main(int argc, char *argv[]) {
         degree2 = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*));
         for (i = 0; i<col_bl; i++){
                degree2[i]= pow(degree[i],2);
-               printf("%u %u\n", degree[i], degree2[i]);
+               //printf("%u %u\n", degree[i], degree2[i]);
         }
 	init_bc_1degree_device(reach);
 	if (analyze_degree == 1)
@@ -2682,7 +2774,8 @@ int main(int argc, char *argv[]) {
 
 		}else if (distribution == 1 ){
 			if (myid == 0)fprintf(stdout,"High-Degree Neighborhood  sampling strategy\n" );
-			prefix_by_col_LOCINT(degree,col_bl,&sum_deg, dist_deg);			
+                        sum_deg_neigh_func(col, row, sum_deg_neigh); 
+			prefix_by_col_LOCINT(degree2, col_bl,&sum_deg, dist_deg);			
 			
 
 
@@ -2824,7 +2917,8 @@ int main(int argc, char *argv[]) {
 				else (v0 = 0);
 				MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_SUM, MPI_COMM_CLUSTER);
 				if (VERT2PROC(v0) == myid){
-					 probability = (float)degree[GJ2LOCJ(v0)]/(float)sum_deg;
+                                         printf("degree of %u %u \n", v0, degree[GJ2LOCJ(v0)]);
+					 probability = (float)sum_deg_neigh[GJ2LOCJ(v0)]/(float)sum_deg;
 				}
 				MPI_Bcast(&probability, 1, MPI_FLOAT, VERT2PROC(v0), MPI_COMM_CLUSTER);
 			//	printf("\nNeighbour Selected  Bongo is %u (%f)\n", v0, probability);
@@ -3180,8 +3274,7 @@ int main(int argc, char *argv[]) {
 	CudaFreeHost(frt);
 	CudaFreeHost(frt_all);
 	CudaFreeHost(degree);
-        CudaFreeHost(degree2);
-
+ 
 	CudaFreeHost(frt_sigma);
 	CudaFreeHost(hFnum);
 	CudaFreeHost(delta);
@@ -3205,14 +3298,14 @@ int main(int argc, char *argv[]) {
 	freeMem(tlvl_v1);
 
 
-	if (distribution == 1 || distribution == 6){freeMem(dist_deg);}// Degree distribution... Store in scan mode
-        if (distribution == 2 || distribution == 6){freeMem( cc_lcc); freeMem( dist_lcc); }// LCC
+	if (distribution == 1 || distribution == 6){freeMem(dist_deg); freeMem (sum_deg_neigh); }// Degree distribution... Store in scan mode
+        if (distribution == 2 || distribution == 6){freeMem( cc_lcc); freeMem( dist_lcc);  }// LCC
         if (distribution == 3 || distribution == 6){ freeMem(dist_bc);   }// BC... Strong Memory
         if (distribution == 4 || distribution == 6){ freeMem(dist_delta);   }// DELATA LAZI APPROACH
         if (distribution == 5 || distribution == 6){ freeMem(dist_sssp);}// SSSP from previous pivot TO IMPLEM
 	freeMem(vs);
         freeMem(approx_vertices);
-
+        freeMem(degree2);
 
 
 	MPI_Barrier(MPI_COMM_WORLD);
