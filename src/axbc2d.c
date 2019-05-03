@@ -1847,8 +1847,9 @@ void sum_deg_neigh_func(LOCINT *col, LOCINT *row, LOCINT *output){
 
 			}
 						
-			output[i] = counter; 
-			//printf("lcc di %u is %f\n", LOCJ2GJ(i),lcc);
+			output[i] = counter;
+//                        if (row_offset == 1) 
+//			printf("counter di %u is %u\n", LOCJ2GJ(i),output[i]);
 //			printf("\n");
 //			for (vv = 0; vv < row_offset; vv++){
 //					printf("conferma conferma %u\n", adj_local[vv]);
@@ -2686,7 +2687,7 @@ int main(int argc, char *argv[]) {
         degree2 = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*));
         for (i = 0; i<col_bl; i++){
                degree2[i]= pow(degree[i],2);
-               //printf("%u %u\n", degree[i], degree2[i]);
+        //       printf("%u %u\n", degree[i], degree2[i]);
         }
 	init_bc_1degree_device(reach);
 	if (analyze_degree == 1)
