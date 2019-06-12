@@ -2373,7 +2373,7 @@ int main(int argc, char *argv[]) {
 			case 'R':
 					// Random Root
 					sscanf(optarg, "%d", &random);
-					if (random != 1 && random != 2 && random != 3)
+					if (random !=0 && random != 1 && random != 2 && random != 3)
 						prexit("Invalid random option (-R): %s\n", optarg);
 					break;
 			case 'D':
