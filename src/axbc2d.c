@@ -2740,7 +2740,7 @@ int main(int argc, char *argv[]) {
 	if (myid == 0) fprintf(stdout, "task %d: c(bader_criterion): %d\n", color, bader_stopping);
 	if (myid == 0)fprintf(stdout,"Pivot Selection Strategy: %d\n", distribution );
 	// INIT RANDOM GENERATOR AGAIN 
-	init_rand(0); // 1 to no static seed
+	init_rand(random); // 1 to no static seed
 	// Select random vertices (no degree zero)
 	for (i = 0; i < approx_nverts; i++  ){
 		approx_vertices[i] = select_root1(col);
