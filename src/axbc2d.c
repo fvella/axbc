@@ -2801,7 +2801,8 @@ int main(int argc, char *argv[]) {
 		}else if (distribution == 6){
 			if (myid == 0)fprintf(stdout,"Mixture sampling strategy: " );
 			if (myid == 0) dist_mix = uniform_int(4, 0);
-			MPI_Bcast(&dist_mix, 1, MPI_INT, 0, MPI_COMM_CLUSTER);
+                        if (ntask > 1)
+			     MPI_Bcast(&dist_mix, 1, MPI_INT, 0, MPI_COMM_CLUSTER);
 			printf("%d \n",dist_mix);
 			
 			lcc_func(col, row,cc_lcc);
