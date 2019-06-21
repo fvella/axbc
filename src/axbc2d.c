@@ -2895,7 +2895,7 @@ int main(int argc, char *argv[]) {
 				 if (ntask > 1) MPI_Bcast(&v0, 1, LOCINT_MPI, 0, MPI_COMM_CLUSTER);	
 				//printf("ur %u ",v0);
 				v0 = findsample_LOCINT(dist_deg, col_bl, v0, &myexit);// return local index 
-				if (myexit == 0) v0 = N+1; // maximum index...  
+				if (myexit == 0) v0 = N - 1; // maximum index...  
 				//printf("(exit %d ) local index %u ",myexit,v0);
 
 				v0 = LOCJ2GJ(v0);
@@ -2933,7 +2933,7 @@ int main(int argc, char *argv[]) {
 				
 //				printf("\t\t\t random %f sum_lcc is %f prob= %f\n", randnum,sum_lcc, probability);
 				v0 = findsample_float(dist_lcc, col_bl, (float)randnum, &myexit);
-				if (myexit == 0) v0 = N+1;
+				if (myexit == 0) v0 = N-1;
 				v0 = LOCJ2GJ(v0);
 				MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
 				if (VERT2PROC(v0) == myid){
@@ -2959,7 +2959,7 @@ int main(int argc, char *argv[]) {
 					if (myid == 0)randnum = uniform_double(sum_bc,0);
 					if (ntask > 1) MPI_Bcast(&randnum, 1, MPI_FLOAT, 0, MPI_COMM_CLUSTER);
 					v0 = findsample_float(dist_bc, row_pp, (float)randnum, &myexit);
-					if (myexit == 0) v0 = N+1;
+					if (myexit == 0) v0 = N-1;
 					v0 = LOCI2GI(v0);
 					MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
 					if (VERT2PROC(v0) == myid){
@@ -2994,7 +2994,7 @@ int main(int argc, char *argv[]) {
 					if (myid == 0) randnum = uniform_double(sum_delta,0);
 					if (ntask > 1) MPI_Bcast(&randnum, 1, MPI_FLOAT, 0, MPI_COMM_CLUSTER);
 					v0 = findsample_float(dist_delta, row_pp, (float)randnum, &myexit);
-					if (myexit == 0) v0 = N+1;
+					if (myexit == 0) v0 = N-1;
 					v0 = LOCI2GI(v0);
 					if ( ntask>1 ) MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
 					if (VERT2PROC(v0) == myid){
