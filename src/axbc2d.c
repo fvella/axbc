@@ -2996,7 +2996,7 @@ int main(int argc, char *argv[]) {
 					v0 = findsample_float(dist_delta, row_pp, (float)randnum, &myexit);
 					if (myexit == 0) v0 = N+1;
 					v0 = LOCI2GI(v0);
-					MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
+					if ( ntask>1 ) MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
 					if (VERT2PROC(v0) == myid){
 						probability = delta[GI2LOCI(v0)]/sum_delta;
 						//printf("\n");
