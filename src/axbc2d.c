@@ -3003,7 +3003,8 @@ int main(int argc, char *argv[]) {
                                                 //for (i = 0; i< row_pp ; i++){ printf("%f ", bc_val[i]);}
                                                 //if (probability== 0) printf("\nAzzz-%d v0=%u (lid %u) %f/%f\n",myid, v0, GI2LOCI(v0), delta[GI2LOCI(v0)], sum_delta);
 					}
-					MPI_Bcast(&probability, 1, MPI_FLOAT, VERT2PROC(v0), MPI_COMM_CLUSTER);
+                                        if (ntask >  1)
+					       MPI_Bcast(&probability, 1, MPI_FLOAT, VERT2PROC(v0), MPI_COMM_CLUSTER);
 
 				}
 				//fprintf(stdout,"sum %f pivot: %u\n", sum_delta, v0);
