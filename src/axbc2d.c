@@ -2858,6 +2858,7 @@ int main(int argc, char *argv[]) {
 		while (isgood == 0 ){
 			if (BSM > (LIMxSAMPLE)) break;
 			probability = 0;
+                        
 			if (dist_mix == 0 || distribution == 0){
 				v0 = select_root1(col);
 				probability = 1.0/(double)N;
@@ -2887,12 +2888,7 @@ int main(int argc, char *argv[]) {
 						else 	neighbours = uniform_int(degree[v0]-1,0);
 						v0 = row[col[v0]+neighbours]; // is local
 						v0 = LOCI2GI(v0); //row is by row
- 
-					
 					}
-					//probability here is tricky...  
-					//v0 = LOCJ2GJ(v0);
-
 
 				}
 				else (v0 = 0);
@@ -2916,7 +2912,6 @@ int main(int argc, char *argv[]) {
 				MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
 				if (VERT2PROC(v0) == myid){
 					probability = cc_lcc[GJ2LOCJ(v0)]/sum_lcc;
-					
 					//if (dist_lcc[GJ2LOCJ(v0)] == sum_lcc) printf("cacca v0 %d (locindex) %d\n", v0, GJ2LOCJ(v0));
 				}
 				if (ntask > 1) MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
@@ -2998,7 +2993,25 @@ int main(int argc, char *argv[]) {
 			}
 			if (distribution == 6){
 				//if (myid == 0)fprintf(stdout,"Mixture sampling strategy: " );
-				if (myid == 0) 	dist_mix = uniform_int(4, 0);
+                                if (VERT2PROC(v0) == myid){
+                                	probability = 1 / (double) N; // distribution 0
+                                	probability = probability + ( (double)sum_deg_neigh[GJ2LOCJ(v0)]/(double)sum_deg); // distribution 1 
+                                	probability = probability + (cc_lcc[GJ2LOCJ(v0)]/sum_lcc); // distribution 2 
+                                        if (nrounds == 0){
+						probability  = probability + (1/(double) N); //  distribution 3 (dynamic BC)
+						probability  = probability + (1/(double) N) ; // distribution 3 (dynamic Delta)  
+                                        }
+					else{
+						prefix_by_row_float(bc_val, row_pp, &sum_bc, dist_bc);
+						probability = probability + ((double)bc_val[GI2LOCI(v0)]/sum_bc );
+						prefix_by_row_float(delta, row_pp, &sum_delta, dist_delta);
+						probability = probability + ((double)delta[GI2LOCI(v0)]/sum_delta);
+					}
+					probability = probability / 5.0;
+                                }
+                 		if (ntask >  1)
+	                                MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
+      				if (myid == 0) 	dist_mix = uniform_int(4, 0);
                                 if (ntask > 1)
 				    MPI_Bcast(&dist_mix, 1, MPI_INT, 0, MPI_COMM_CLUSTER);
 //				if (myid == 0)fprintf(stdout,"%d\n",dist_mix );
@@ -3040,7 +3053,7 @@ int main(int argc, char *argv[]) {
  */		
 		//if (myid == 0)fprintf(stdout,"Build Dynamic Distributions\n");
 
-		//if (BSM > (2*N)){ // this means the sampler is generating too much bad samples  
+		//if (BSM > (2*N)){ // this means the sampler is generating too many bad samples
                   //      fprintf(stdout,"Exit: Too much bad samples generated \n");
                    //     break;
                 //}
@@ -3077,8 +3090,8 @@ int main(int argc, char *argv[]) {
 		setcuda(ned, col, row, reach_v0);
 		
 		if (VERT2PROC(v0) == myid) vs[GI2LOCI(v0)] = 1;
+                if (distribution == 6) printf("The strategy %d has been selected for the next round. [To Fix]  ", dist_mix);	
 		if (myid == 0)printf("Perform %d/%lu BC from %u (ui=%d strategy (%d,%d) p =%lf)\n", nrounds+1,nbfs, v0, ui, distribution, dist_mix, probability);
-                if (distribution == 6) printf("The strategy %d has been selected for the next round. To Fix", dist_mix);	
 		/*EACH PROCESSORS MUST HAVE ALL DISTRIBUTIOS */
 		if (mono == 0) {
 			     bc_func(row, col,  frt_all, frt,  hFnum, msk,   lvl, degree,  sigma, frt_sigma, delta, rem_ed,
@@ -3106,8 +3119,6 @@ int main(int argc, char *argv[]) {
 				//get_delta(delta);
 				MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, bc_val, row_pp, MPI_FLOAT, Row_comm);
 				MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, delta, row_pp, MPI_FLOAT, Row_comm);
-				
-				
 			}
 		//	printf("proc-%d: ", myid);
 /*
