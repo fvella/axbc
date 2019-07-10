@@ -152,7 +152,7 @@ extern LINKAGE LOCINT write_delta_cuda(LOCINT ncol, float *hRFbuf, float *hSFbuf
 extern LINKAGE LOCINT append_rows_cuda(LOCINT *rbuf, LOCINT ld,   int *rnum, int np,
                                        LOCINT *frt, LOCINT *frt_sigma, LOCINT nfrt, int level);
 
-extern LINKAGE void update_bc_cuda(LOCINT v0, float p, int ncol, const uint64_t nvisited);
+extern LINKAGE void update_bc_cuda(LOCINT v0, double p, int ncol, const uint64_t nvisited);
 extern LINKAGE void update_bc_cuda_2degree(LOCINT v0, uint64_t v1, uint64_t v2, int ncol, const uint64_t nvisited_v0, const uint64_t nvisited_v1,const uint64_t nvisited_v2);
 
 extern LINKAGE void pre_update_bc_cuda(LOCINT *reach, LOCINT v0, LOCINT* all);

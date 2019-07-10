@@ -266,7 +266,7 @@ __global__ void write_sigma(const LOCINT *__restrict__ sbuf, const LOCINT *__res
 
 
 
-__global__ void update_bc(const float *__restrict__ delta, int r0, float p, LOCINT n,  float *bc, LOCINT *reach, const uint64_t nvisited) {
+__global__ void update_bc(const float *__restrict__ delta, int r0, double p, LOCINT n,  float *bc, LOCINT *reach, const uint64_t nvisited) {
 
 	const uint32_t tid = blockDim.x*blockIdx.x + threadIdx.x;
 
@@ -280,13 +280,13 @@ __global__ void update_bc(const float *__restrict__ delta, int r0, float p, LOCI
     // in verita' non e' un problema ma la cosa e' ingannevole:
     // trace dei caller row_pp -> ncol -> n
 	//bc[tid] += delta[tid]*(reach[r0]+1); ///2.0f; NON FUNZIONA SE LO FACCIAMO QUI
-    	bc[tid] = __ldg(&bc[tid]) + ( delta[tid]*(d_reach_v0 + 1)/p);
+    	bc[tid] = __ldg(&bc[tid]) + float( double(delta[tid]*(d_reach_v0 + 1))/p);
 //	if (tid == 0) printf("%f\n", p);
 	return;
 }
 
 
-void update_bc_cuda(LOCINT v0, float p,int ncol, const uint64_t __restrict__ nvisited) {
+void update_bc_cuda(LOCINT v0, double p,int ncol, const uint64_t __restrict__ nvisited) {
 	// v0 is the GLOBAL root vertex
     //printf("%s at %d : %d  v: %d   proc: %d\n", __func__, __LINE__, ncol, GI2LOCI(v0),myid);
 	int r0 = -1;

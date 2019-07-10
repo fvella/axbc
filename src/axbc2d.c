@@ -1516,7 +1516,7 @@ static double bc_func(LOCINT *row, LOCINT *col, LOCINT *frt_all, LOCINT* frt, in
 static double bc_func_mono(LOCINT *row, LOCINT *col, LOCINT *frt_all, LOCINT* frt, int* hFnum,
 					       LOCINT *msk, int *lvl, LOCINT *deg,
 						   LOCINT *sigma, LOCINT *frt_sig, float *delta, LOCINT rem_ed,
-						   LOCINT v0, float p, LOCINT *vRbuf, int *vRnum, LOCINT *hSbuf, int *hSnum, LOCINT *hRbuf,
+						   LOCINT v0, double p, LOCINT *vRbuf, int *vRnum, LOCINT *hSbuf, int *hSnum, LOCINT *hRbuf,
 						   int *hRnum, float *hSFbuf, float *hRFbuf, LOCINT *reach,
 						   MPI_Request *vrequest, MPI_Request *hrequest, MPI_Status *status,
 						   uint64_t* total_time, int dump) {
@@ -1657,29 +1657,6 @@ static double bc_func_mono(LOCINT *row, LOCINT *col, LOCINT *frt_all, LOCINT* fr
 			0, 0, 0, *total_time);
 #endif
 
-	//get_msk(msk);
-	// compute teps
-	/*
-	n = 0;
-	for(j = 0; j < row_pp; j++)
-		n += (!!MSKGET(msk,j)) * deg[j];
-
-// 	MPI_Reduce(&n, &ned, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-	n >>= 1; // ??
-	teps = ((double)n)/(*total_time/1.0E+6);
-
-	if (0 == myid) {
-		fprintf(stdout, "\n\n\n\nElapsed time: %f secs\n", *total_time/1.0E+6);
-		fprintf(stdout, "Traversed edges: %"PRIu64"\n", ned);
-		fprintf(stdout, "Measured TEPS: %lf\n", teps);
-	}
-*/
-	/*
-	if (dump) {
-		dump_lvl(lvl, mycol*row_bl, mycol*row_bl+row_bl);
-		dump_prd(prd, mycol*row_bl, mycol*row_bl+row_bl, hSbuf, row_bl, hSnum, msk);
-	}
-    */
 	return teps;
 }
 
@@ -2730,7 +2707,7 @@ int main(int argc, char *argv[]) {
 
 	LOCINT skip=0, reach_v0, nrounds=0, skipped=0, BSM=0, neighbours=0;
 	float randnum =0;
-	float probability = -1;
+	double probability = -1;
 	short myexit = 0;
 	uint64_t all_time=0, bc_time=0, min_time=UINT_MAX, max_time=0;
 	// commu_all_time = overall time spent in communication
@@ -2807,7 +2784,9 @@ int main(int argc, char *argv[]) {
 			
 			lcc_func(col, row,cc_lcc);
 			prefix_by_col_float(cc_lcc,col_bl, &sum_lcc, dist_lcc);
-			prefix_by_col_LOCINT(degree,col_bl, &sum_deg, dist_deg);
+                        sum_deg_neigh_func(col, row, sum_deg_neigh); 
+			prefix_by_col_LOCINT(degree2, col_bl,&sum_deg, dist_deg);			
+	
 			// sampling 0 to 4
 		}
 
@@ -2841,7 +2820,7 @@ int main(int argc, char *argv[]) {
 		// nbfs is the maximum limit 
 		//break ; // TO REMOVE
 		//printf("BSM %d \n\n\n", BSM);
-		//if (BSM > (2*N)){ // this means the sampler is generating too much bad samples  
+		//if (BSM > (2*N)){ // this means the sampler is generating too many bad samples 
 		//	fprintf(stdout,"Exit: Too much bad samples generated \n");	
 		//	break;
 		//}	
@@ -2881,18 +2860,18 @@ int main(int argc, char *argv[]) {
 			probability = 0;
 			if (dist_mix == 0 || distribution == 0){
 				v0 = select_root1(col);
-				probability = 1.0/(float)N;
+				probability = 1.0/(double)N;
 //				if (myid == 0)fprintf(stdout,"UNIFORM sampling strategy (try v0 %u)\n", v0);
 				//poppo = uniform01();
 				//popo = uniform_int(100, 0);
 				//}
 				//printf("pid-%d UNIFORM int %d\n", myid, popo);
-				//printf("pid-%d UNIFORM01 %lf\n", myid, poppo);	
+				//printf("pid-%d UNIFORM01 %lf\n", myid, probability);	
 
 			}else if (dist_mix == 1 || distribution == 1){
 				//if (myid == 0)fprintf(stdout," (myid-%d) High-Degree Neighborhood  sampling strategy (col_bl %d) , ",myid, col_bl);
-				 if (myid == 0) v0 = uniform_int(sum_deg,0);
-				 if (ntask > 1) MPI_Bcast(&v0, 1, LOCINT_MPI, 0, MPI_COMM_CLUSTER);	
+				if (myid == 0) v0 = uniform_int(sum_deg,0);
+				if (ntask > 1) MPI_Bcast(&v0, 1, LOCINT_MPI, 0, MPI_COMM_CLUSTER);	
 				//printf("ur %u ",v0);
 				v0 = findsample_LOCINT(dist_deg, col_bl, v0, &myexit);// return local index 
 				if (myexit == 0) v0 = N - 1; // maximum index...  
@@ -2919,17 +2898,16 @@ int main(int argc, char *argv[]) {
 				else (v0 = 0);
 				MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_SUM, MPI_COMM_CLUSTER);
 				if (VERT2PROC(v0) == myid){
-                                         printf("degree of %u %u \n", v0, degree[GJ2LOCJ(v0)]);
-					 probability = (float)sum_deg_neigh[GJ2LOCJ(v0)]/(float)sum_deg;
+					 probability = (double)sum_deg_neigh[GJ2LOCJ(v0)]/(double)sum_deg;
 				}
-				if (ntask > 1) MPI_Bcast(&probability, 1, MPI_FLOAT, VERT2PROC(v0), MPI_COMM_CLUSTER);
-			//	printf("\nNeighbour Selected  Bongo is %u (%f)\n", v0, probability);
+				if (ntask > 1) MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
+				//printf("\nNeighbour Selected  Bongo is %u (%lf) sum_deg_v0=%d sum_deg=%d\n", v0, probability, sum_deg_neigh[GJ2LOCJ(v0)], sum_deg);
 				//printf("\n");	
 
 			}else if (dist_mix == 2 || distribution == 2){
 				//if (myid == 0)fprintf(stdout,"LCC  sampling strategy (sum is %f)\n",sum_lcc );
 				if (myid == 0)randnum = uniform_double(sum_lcc,0);
-				if (ntask > 1) MPI_Bcast(&randnum, 1, MPI_FLOAT, 0, MPI_COMM_CLUSTER);
+				if (ntask > 1) MPI_Bcast(&randnum, 1, MPI_DOUBLE, 0, MPI_COMM_CLUSTER);
 				
 //				printf("\t\t\t random %f sum_lcc is %f prob= %f\n", randnum,sum_lcc, probability);
 				v0 = findsample_float(dist_lcc, col_bl, (float)randnum, &myexit);
@@ -2941,14 +2919,14 @@ int main(int argc, char *argv[]) {
 					
 					//if (dist_lcc[GJ2LOCJ(v0)] == sum_lcc) printf("cacca v0 %d (locindex) %d\n", v0, GJ2LOCJ(v0));
 				}
-				if (ntask > 1) MPI_Bcast(&probability, 1, MPI_FLOAT, VERT2PROC(v0), MPI_COMM_CLUSTER);
+				if (ntask > 1) MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
 			//	printf("myid %d LCC based pivot %u (p %f= %f/%f)\n",myid, v0, probability, cc_lcc[GJ2LOCJ(v0)], sum_lcc);
 
 
 			}else if (dist_mix == 3 || distribution == 3){
 				if (nrounds == 0){
 					v0 = select_root1(col);
-					probability = 1.0/(float)N;
+					probability = 1.0/(double)N;
 
 				}else{
 					//if (myid == 0)fprintf(stdout,"BC sampling strategy\n" );
@@ -2957,17 +2935,19 @@ int main(int argc, char *argv[]) {
 						prefix_by_row_float(bc_val, row_pp, &sum_bc, dist_bc);			
 					}		
 					if (myid == 0)randnum = uniform_double(sum_bc,0);
-					if (ntask > 1) MPI_Bcast(&randnum, 1, MPI_FLOAT, 0, MPI_COMM_CLUSTER);
+					if (ntask > 1) MPI_Bcast(&randnum, 1, MPI_DOUBLE, 0, MPI_COMM_CLUSTER);
 					v0 = findsample_float(dist_bc, row_pp, (float)randnum, &myexit);
 					if (myexit == 0) v0 = N-1;
 					v0 = LOCI2GI(v0);
 					MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
 					if (VERT2PROC(v0) == myid){
-						probability = bc_val[GI2LOCI(v0)]/sum_bc;	
-						if (probability == 0 )	printf("proc-%d: (gid) %u  lid %u\n", myid, v0, GI2LOCI(v0));
+						probability = (double)bc_val[GI2LOCI(v0)]/sum_bc;	
+//						printf("WARNING!!!!!!!! p=%lf %f\n",probability, sum_bc);                                               
+
+//						if (probability == 0 )	printf("proc-%d: (gid) %u  lid %u\n", myid, v0, GI2LOCI(v0));
 
 					}
-					if (ntask > 1) MPI_Bcast(&probability, 1, MPI_FLOAT, VERT2PROC(v0), MPI_COMM_CLUSTER);
+					if (ntask > 1) MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
 					
 
 
@@ -2983,7 +2963,7 @@ int main(int argc, char *argv[]) {
 			}else if (dist_mix == 4 || distribution == 4){
 				if (nrounds == 0){
 					v0 = select_root1(col);
-					probability = 1.0/(float)N;
+					probability = 1.0/(double)N;
 
 				}else{
 					//if (myid == 0)fprintf(stdout,"Delta sampling strategy: " );
@@ -2998,13 +2978,13 @@ int main(int argc, char *argv[]) {
 					v0 = LOCI2GI(v0);
 					if ( ntask>1 ) MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
 					if (VERT2PROC(v0) == myid){
-						probability = delta[GI2LOCI(v0)]/sum_delta;
+						probability = (double)delta[GI2LOCI(v0)]/sum_delta;
 						//printf("\n");
                                                 //for (i = 0; i< row_pp ; i++){ printf("%f ", bc_val[i]);}
                                                 //if (probability== 0) printf("\nAzzz-%d v0=%u (lid %u) %f/%f\n",myid, v0, GI2LOCI(v0), delta[GI2LOCI(v0)], sum_delta);
 					}
                                         if (ntask >  1)
-					       MPI_Bcast(&probability, 1, MPI_FLOAT, VERT2PROC(v0), MPI_COMM_CLUSTER);
+					       MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
 
 				}
 				//fprintf(stdout,"sum %f pivot: %u\n", sum_delta, v0);
@@ -3012,7 +2992,7 @@ int main(int argc, char *argv[]) {
 
 			}else if (dist_mix == 5 || distribution == 5 ){
 				//if (myid == 0)fprintf(stdout,"SSSP from previous Pivot sampling strategy\n" );
-				probability = 1.0/(float)N;
+				probability = 1.0/(double)N;
 				v0 = select_root1(col);
 				
 			}
@@ -3021,7 +3001,7 @@ int main(int argc, char *argv[]) {
 				if (myid == 0) 	dist_mix = uniform_int(4, 0);
                                 if (ntask > 1)
 				    MPI_Bcast(&dist_mix, 1, MPI_INT, 0, MPI_COMM_CLUSTER);
-				//if (myid == 0)fprintf(stdout,"%d\n",dist_mix );
+//				if (myid == 0)fprintf(stdout,"%d\n",dist_mix );
 			}
 			//fprintf(stdout,"Pivot select %d\n",v0);   // Check if v0 is already visited
 			//
@@ -3097,8 +3077,8 @@ int main(int argc, char *argv[]) {
 		setcuda(ned, col, row, reach_v0);
 		
 		if (VERT2PROC(v0) == myid) vs[GI2LOCI(v0)] = 1;
-		if (myid == 0)printf("Perform %d/%lu BC from %u (ui=%d strategy (%d,%d) p =%f)\n", nrounds+1,nbfs, v0, ui, distribution, dist_mix, probability);
-		
+		if (myid == 0)printf("Perform %d/%lu BC from %u (ui=%d strategy (%d,%d) p =%lf)\n", nrounds+1,nbfs, v0, ui, distribution, dist_mix, probability);
+                if (distribution == 6) printf("The strategy %d has been selected for the next round. To Fix", dist_mix);	
 		/*EACH PROCESSORS MUST HAVE ALL DISTRIBUTIOS */
 		if (mono == 0) {
 			     bc_func(row, col,  frt_all, frt,  hFnum, msk,   lvl, degree,  sigma, frt_sigma, delta, rem_ed,
@@ -3129,9 +3109,10 @@ int main(int argc, char *argv[]) {
 				
 				
 			}
-		/*	printf("proc-%d: ", myid);
+		//	printf("proc-%d: ", myid);
+/*
 			for (i = 0; i < row_pp; i++){
-				printf("%f ",delta[i]);
+				printf("%f ",delta[i], bc_val[i] );
 				
 			}
 			printf("\n");
