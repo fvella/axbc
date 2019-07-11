@@ -1117,7 +1117,7 @@ static void analyze_deg(LOCINT *deg, int n) {
 static double bc_func(LOCINT *row, LOCINT *col, LOCINT *frt_all, LOCINT* frt, int* hFnum,
                       LOCINT *msk, int *lvl, LOCINT *deg,
                       LOCINT *sigma, LOCINT *frt_sig, float *delta, LOCINT rem_ed,
-                      LOCINT v0, float p, LOCINT *vRbuf, int *vRnum, LOCINT *hSbuf, int *hSnum, LOCINT *hRbuf,
+                      LOCINT v0, double p, LOCINT *vRbuf, int *vRnum, LOCINT *hSbuf, int *hSnum, LOCINT *hRbuf,
                       int *hRnum, float *hSFbuf, float *hRFbuf, LOCINT *reach,
 					  MPI_Request *vrequest, MPI_Request *hrequest, MPI_Status *status,
 					  uint64_t* total_time, uint64_t* compu_time, uint64_t* commu_time, int dump) {
@@ -2967,9 +2967,8 @@ int main(int argc, char *argv[]) {
 					MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
 					if (VERT2PROC(v0) == myid){
 					    probability = (double)delta[GI2LOCI(v0)]/sum_delta;
-                    }
+                                        }
 					MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
-
 				}
 				//fprintf(stdout,"sum %f pivot: %u\n", sum_delta, v0);
 				
@@ -2981,32 +2980,30 @@ int main(int argc, char *argv[]) {
 				
 			}
 			if (distribution == 6){
-                 probability = 1 / (double) N; // distribution 0 all the processors
-                 /* Distributions 3 and 4 (dynamics) all the processors */
-                 if (nrounds == 0){                     
-                     probability =  probability + (1/(double) N);
-                     probability  = probability + (1/(double) N) ;
-
-                 }
-                 else{
-                     prefix_by_row_float(bc_val, row_pp, &sum_bc, dist_bc);
-                     if (VERT2PROC(v0) == myid) probability = probability + ((double)bc_val[GI2LOCI(v0)]/sum_bc );
-                     prefix_by_row_float(delta, row_pp, &sum_delta, dist_delta);
-					 if (VERT2PROC(v0) == myid) probability = probability + ((double)delta[GI2LOCI(v0)]/sum_delta);
-                 }
-                 // Distribution for 1 processors; force to update the probability of the others. 
-                 if (VERT2PROC(v0) == myid){
-                       	probability = probability + ( (double)sum_deg_neigh[GJ2LOCJ(v0)]/(double)sum_deg); // distribution 1 
-                      	probability = probability + (cc_lcc[GJ2LOCJ(v0)]/sum_lcc); // distribution 2 
-				        probability = probability / 5.0;
-                }
-                // Overwrite the probability of the others. 
-	            MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
-                if (myid == 0 ) {
-                    dist_mix = uniform_int(4, 0);
-                }
-                MPI_Bcast(&dist_mix, 1, LOCINT_MPI, 0, MPI_COMM_CLUSTER);
-
+                            probability = 1 / (double) N; // distribution 0 all the processors
+                            /* Distributions 3 and 4 (dynamics) all the processors */
+                            if (nrounds == 0){                     
+                                probability =  probability + (1/(double) N);
+                                probability  = probability + (1/(double) N) ;
+                            }
+                            else{
+                                prefix_by_row_float(bc_val, row_pp, &sum_bc, dist_bc);
+                                if (VERT2PROC(v0) == myid) probability = probability + ((double)bc_val[GI2LOCI(v0)]/sum_bc );
+                                prefix_by_row_float(delta, row_pp, &sum_delta, dist_delta);
+		                if (VERT2PROC(v0) == myid) probability = probability + ((double)delta[GI2LOCI(v0)]/sum_delta);
+                           }
+                           // Distribution for 1 processors; force to update the probability of the others. 
+                          if (VERT2PROC(v0) == myid){
+                              probability = probability + ( (double)sum_deg_neigh[GJ2LOCJ(v0)]/(double)sum_deg); // distribution 1 
+                      	      probability = probability + (cc_lcc[GJ2LOCJ(v0)]/sum_lcc); // distribution 2 
+		              probability = probability / 5.0;
+                          }
+                          // Overwrite the probability of the others. 
+                          MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
+                          if (myid == 0 ) {
+			    dist_mix = uniform_int(4, 0);
+			   }
+			   MPI_Bcast(&dist_mix, 1, LOCINT_MPI, 0, MPI_COMM_CLUSTER);
 			}
 			//fprintf(stdout,"Pivot select %d\n",v0);   // Check if v0 is already visited
 			//
