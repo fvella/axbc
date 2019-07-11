@@ -2921,10 +2921,7 @@ int main(int argc, char *argv[]) {
 
 				}else{
 					//if (myid == 0)fprintf(stdout,"BC sampling strategy\n" );
-					if (BSM==0){
-						//get_bc(bc_val);	
-						prefix_by_row_float(bc_val, row_pp, &sum_bc, dist_bc);			
-					}		
+					prefix_by_row_float(bc_val, row_pp, &sum_bc, dist_bc);	
 					if (myid == 0)randnum = uniform_double(sum_bc,0);
 					MPI_Bcast(&randnum, 1, MPI_DOUBLE, 0, MPI_COMM_CLUSTER);
 					v0 = findsample_float(dist_bc, row_pp, (float)randnum, &myexit);
@@ -2938,7 +2935,7 @@ int main(int argc, char *argv[]) {
 //						if (probability == 0 )	printf("proc-%d: (gid) %u  lid %u\n", myid, v0, GI2LOCI(v0));
 
 					}
-                    MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
+                                        MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
 					//printf("myid-%d (sum %f) bc val: ",sum_bc, myid);
 					//for (i = 0; i<row_pp; i++){
 					//	printf("%f ", bc_val[i]);
@@ -2955,10 +2952,8 @@ int main(int argc, char *argv[]) {
 
 				}else{
 					//if (myid == 0)fprintf(stdout,"Delta sampling strategy: " );
-					if (BSM==0){
 						//get_delta(delta);
-						prefix_by_row_float(delta, row_pp, &sum_delta, dist_delta);
-					}
+					prefix_by_row_float(delta, row_pp, &sum_delta, dist_delta);
 					if (myid == 0) randnum = uniform_double(sum_delta,0);
 					MPI_Bcast(&randnum, 1, MPI_DOUBLE, 0, MPI_COMM_CLUSTER);
 					v0 = findsample_float(dist_delta, row_pp, (float)randnum, &myexit);
