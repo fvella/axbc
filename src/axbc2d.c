@@ -2013,6 +2013,48 @@ void prefix_by_row_float(float * input, LOCINT size, float *mysum, float *prefix
 
 	return;
 }
+void prefix_by_row_float_inverse(float * input, LOCINT size, float *mysum, float *prefix_tmp){
+	float sum=0;
+	LOCINT i=0;
+	if (mycol==0 && R > 1){
+//		printf("HELLO HELLO %d (%d,%d)\n", myid, myrow,mycol);
+		if (myrow != 0){
+			MPI_Recv(&sum, 1, MPI_FLOAT, myrow -1, 2200, Col_comm, NULL);
+//			printf("HELLO HELLO  %d received from myrow-1 %d sum=%f\n", myid, myrow-1,sum);
+			prefix_tmp[0] = sum + (1/(1+input[0]));
+			for (i  = 1; i  < size; i++){
+				prefix_tmp[i] = (1/(1+input[i])) + prefix_tmp[i-1];
+			}
+			sum = prefix_tmp[size-1];
+//			printf("NEW SUM is %f\n", sum);
+		}
+		else{
+			prefix_tmp[0] =  (1/(1+input[0]));
+			for (i  = 1; i< size; i++){
+				prefix_tmp[i] = (1/(1+input[i])) + prefix_tmp[i-1];
+			}
+			sum = prefix_tmp[size-1];
+		}
+		if (myrow != (R-1)) {
+			MPI_Send(&sum, 1, MPI_FLOAT, (myrow + 1), 2200, Col_comm);
+//			printf("HELLO HELLO  %d send to myrow+1 %d sum=%f\n", myid, myrow+1,sum);
+		}
+
+	}
+	if (R == 1){
+		prefix_tmp[0] = (1/(1+input[0]));
+		for (i  = 1; i< size; i++) prefix_tmp[i] = (1/(1+input[i])) + prefix_tmp[i-1];
+		sum = prefix_tmp[size-1];
+		//printf("SUM %f\n", sum);	
+	}
+
+	if (ntask > 1)  MPI_Bcast(&sum, 1, MPI_FLOAT, (R-1)*C, MPI_COMM_CLUSTER);
+	mysum[0] = sum;
+//	printf("(myid-%d) SUM after Bcast:%f\n",myid, sum);	
+
+	return;
+}
+
 
 
 
@@ -2615,9 +2657,8 @@ int main(int argc, char *argv[]) {
 	dist0 =  (float*)CudaMallocHostSet(sizeof(float*),0); ///is UNIFORM DISTRIBUTION TAKE A SINGLE VALUE in (0,1)
 	if (distribution == 1 || distribution == 6){ dist_deg  = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*)); sum_deg_neigh = (LOCINT*)Malloc(col_bl*sizeof(LOCINT*));}// Degree distribution... Store in scan mode
 	if (distribution == 2 || distribution == 6){ cc_lcc  = (float*)Malloc(col_bl*sizeof(float*));   dist_lcc = (float*)Malloc(col_bl*sizeof(float*));}// LCC
-	if (distribution == 3 || distribution == 6){ dist_bc   = (float*)Malloc(row_pp*sizeof(float*));  }// BC... Strong Memory
+	if (distribution == 3 || distribution == 5 ||distribution == 6){ dist_bc   = (float*)Malloc(row_pp*sizeof(float*));  }// BC... Strong Memory
 	if (distribution == 4 || distribution == 6){ dist_delta= (float*)Malloc(row_pp*sizeof(float*));  }// DELATA LAZI APPROACH
-	if (distribution == 5 || distribution == 6){ dist_sssp = (LOCINT*)Malloc(row_pp*sizeof(LOCINT*));}// SSSP from previous pivot TO IMPLEMENT
 //	if (distribution == 6){ dist_mix    =   (float*)CudaMallocHostSet((distribution+1)*sizeof(float*),0);         }// Lazy approach
 
 	approx_vertices = (LOCINT*)Malloc(approx_nverts*sizeof(LOCINT));
@@ -2656,7 +2697,6 @@ int main(int argc, char *argv[]) {
 		hRnum = (int *)CudaMallocHostSet(C*sizeof(*hRnum), 0);
 		hSFbuf = (float*)CudaMallocHostSet(MAX(col_bl, row_pp)*sizeof(*hSFbuf), 0);
 		hRFbuf = (float*)CudaMallocHostSet(MAX(col_bl, row_pp)*sizeof(*hRFbuf), 0);
-
 		status  =  (MPI_Status *) Malloc(MAX(C,R)*sizeof(*status));
 		vrequest = (MPI_Request *)Malloc(MAX(C,R)*sizeof(*vrequest));
 		hrequest = (MPI_Request *)Malloc(MAX(C,R)*sizeof(*hrequest));
@@ -2728,7 +2768,7 @@ int main(int argc, char *argv[]) {
 
 		}else if (distribution == 1 ){
 			if (myid == 0)fprintf(stdout,"High-Degree Neighborhood  sampling strategy\n" );
-            sum_deg_neigh_func(col, row, sum_deg_neigh); 
+                        sum_deg_neigh_func(col, row, sum_deg_neigh); 
 			prefix_by_col_LOCINT(degree2, col_bl,&sum_deg, dist_deg);			
 			
 
@@ -2750,7 +2790,7 @@ if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
 			//  first time is uniform sampling Nothing to do here... remove this
 
 		}else if (distribution == 5){
- 			if (myid == 0)fprintf(stdout,"SSSP from previous Pivot sampling strategy (NOT IMPLEMENTED)\n" );
+ 			if (myid == 0)fprintf(stdout,"BC inverse sampling strategy\n" );
 			// first time is uniform sampling Nothing to do here... remove this 
 
 
@@ -2762,7 +2802,7 @@ if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
 			
 			lcc_func(col, row,cc_lcc);
 			prefix_by_col_float(cc_lcc,col_bl, &sum_lcc, dist_lcc);
-            sum_deg_neigh_func(col, row, sum_deg_neigh); 
+                        sum_deg_neigh_func(col, row, sum_deg_neigh); 
 			prefix_by_col_LOCINT(degree2, col_bl,&sum_deg, dist_deg);			
 	
 			// sampling 0 to 4
@@ -2953,9 +2993,34 @@ if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
 				
 
 			}else if (dist_mix == 5 || distribution == 5 ){
-				//if (myid == 0)fprintf(stdout,"SSSP from previous Pivot sampling strategy\n" );
-				probability = 1.0/(double)N;
-				v0 = select_root1(col);
+				if (nrounds == 0){
+					v0 = select_root1(col);
+					probability = 1.0/(double)N;
+
+				}else{
+					//if (myid == 0)fprintf(stdout,"BC sampling strategy\n" );
+					prefix_by_row_float_inverse(bc_val, row_pp, &sum_bc, dist_bc);	
+					if (myid == 0)randnum = uniform_double(sum_bc,0);
+					MPI_Bcast(&randnum, 1, MPI_DOUBLE, 0, MPI_COMM_CLUSTER);
+					v0 = findsample_float(dist_bc, row_pp, (float)randnum, &myexit);
+					if (myexit == 0) v0 = N-1;
+					v0 = LOCI2GI(v0);
+					MPI_Allreduce(MPI_IN_PLACE, &v0, 1, LOCINT_MPI, MPI_MIN, MPI_COMM_CLUSTER);
+					if (VERT2PROC(v0) == myid){
+						probability = (double)1/((double)bc_val[GI2LOCI(v0)]+1)/sum_bc;	
+						//printf("WARNING!!!!!!!! p=%lf %f\n",probability, 1/sum_bc);//if (probability == 0 )	printf("proc-%d: (gid) %u  lid %u\n", myid, v0, GI2LOCI(v0));
+
+					}
+                                        MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
+					//printf("myid-%d (sum %f) bc val: ",sum_bc, myid);
+					//for (i = 0; i<row_pp; i++){
+					//	printf("%f ", bc_val[i]);
+					//}
+					//printf("\n");
+					//v0 = select_root1(col);
+				}
+				//fprintf(stdout,"v0 %u\n", v0);
+
 				
 			}
 			if (distribution == 6){
@@ -2980,13 +3045,11 @@ if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
                           // Overwrite the probability of the others. 
                           MPI_Bcast(&probability, 1, MPI_DOUBLE, VERT2PROC(v0), MPI_COMM_CLUSTER);
                           if (myid == 0 ) {
-			    dist_mix = uniform_int(4, 0);
+			    dist_mix = uniform_int(2, 0);
 			   }
 			   MPI_Bcast(&dist_mix, 1, LOCINT_MPI, 0, MPI_COMM_CLUSTER);
 			}
-			//fprintf(stdout,"Pivot select %d\n",v0);   // Check if v0 is already visited
-			//
-			// Check if v0 has been already visited
+
 			skip = 0;
 			if (VERT2PROC(v0) == myid){
 				if (vs[GI2LOCI(v0)] == 1){ 
@@ -3053,7 +3116,7 @@ if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
 		setcuda(ned, col, row, reach_v0);
 		
 		if (VERT2PROC(v0) == myid) vs[GI2LOCI(v0)] = 1;
-        if (distribution == 6 && myid == 0  ) printf("The strategy %d has been selected for the next round. [To Fix]  ", dist_mix);	
+                if (distribution == 6 && myid == 0  ) printf("The strategy %d has been selected for the next round. [To Fix]  ", dist_mix);	
 		if (myid == 0)printf("Perform %d/%lu BC from %u (ui=%lu strategy (%u,%u) p =%lf)\n", nrounds+1,nbfs, v0, ui, distribution, dist_mix, probability);
 		/*EACH PROCESSORS MUST HAVE ALL DISTRIBUTIOS */
 		if (mono == 0) {
@@ -3071,7 +3134,7 @@ if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
 		Get Delta
 		Get Last BC
 		*/
- 		if (distribution == 3 || distribution == 4 || distribution == 6) {
+ 		if (distribution == 3 || distribution == 4 || distribution == 5 ||distribution == 6) {
 			get_bc(bc_val);
 			get_delta(delta);
 			if (C > 1) {
@@ -3194,9 +3257,9 @@ if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
 	CudaFreeHost(hSFbuf);
 	CudaFreeHost(hRFbuf);
 //2-degree
-    CudaFreeHost(frt_v1);
-    CudaFreeHost(frt_all_v1);
-   	CudaFreeHost(hFnum_v1);
+        CudaFreeHost(frt_v1);
+        CudaFreeHost(frt_all_v1);
+        CudaFreeHost(hFnum_v1);
 	
 //ONEPREFIX
 	freeMem(tlvl);
@@ -3205,9 +3268,8 @@ if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
 
 	if (distribution == 1 || distribution == 6){freeMem(dist_deg); freeMem (sum_deg_neigh); }// Degree distribution... Store in scan mode
     if (distribution == 2 || distribution == 6){freeMem( cc_lcc); freeMem( dist_lcc);  }// LCC
-    if (distribution == 3 || distribution == 6){ freeMem(dist_bc);   }// BC... Strong Memory
+    if (distribution == 3 || distribution == 5 || distribution == 6){ freeMem(dist_bc);   }// BC... Strong Memory
     if (distribution == 4 || distribution == 6){ freeMem(dist_delta);   }// DELATA LAZI APPROACH
-    if (distribution == 5 || distribution == 6){ freeMem(dist_sssp);}// SSSP from previous pivot TO IMPLEM
 	freeMem(vs);
     freeMem(approx_vertices);
     freeMem(degree2);
