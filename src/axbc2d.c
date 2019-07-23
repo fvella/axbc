@@ -17,7 +17,7 @@
 #include "bc2d.h"
 #define GRAPH_GENERATOR_MPI
 #include "../generator/make_graph.h"
-
+#include <omp.h>
 
 #define VTAG(t) (  0*ntask+(t))
 #define HTAG(t) (100*ntask+(t))
@@ -1871,54 +1871,35 @@ void lcc_func(LOCINT *col, LOCINT *row, float *output){
 		MPI_Win_lock_all(0, win_col);
 		MPI_Win_lock_all(0, win_row);
 		LOCINT *adj_v = (LOCINT*)CudaMallocHostSet(row_pp*sizeof(LOCINT), 0);
-//		LOCINT *adj_v = (LOCINT*)malloc(row_pp*sizeof(LOCINT));
 		LOCINT *adj_local = (LOCINT*)CudaMallocHostSet(row_pp*sizeof(LOCINT), 0);
-	
-//		printf("locint %d and LOCINTMPI %d\n", sizeof(LOCINT),sizeof(LOCINT_MPI));	
 		for (i = 0; i < col_bl; i++){
 			row_offset = col[i+1] - col[i];
-//			fprintf(stdout,"proc-%d (%d,%d)  Node %ld (degree %d) -> ",myid, myrow, mycol, LOCJ2GJ(i), row_offset );
+                        if (row_offset < 2 ) continue;
 			memcpy(adj_local, &row[col[i]], row_offset*sizeof(LOCINT));	
-			//fprintf(stdout,"%u ",/*LOCI2GI*/( row[col[i]+jj]));	
-			//printf("Calcolo lcc di %u: ",LOCJ2GJ(i));				
 			counter = 0;
 			for (jj = 0; jj < row_offset; jj++){
-				//break;		
 				gvid =LOCI2GI(row[col[i]+jj]); // offset gvid in proc dest_get is gvid % C
 				dest_get = VERT2PROC(gvid);
 				off_start = gvid % col_bl ;
-				//continue;
 				if (dest_get != myid ){	
 					MPI_Get(r_off,2, MPI_UINT32_T, dest_get, off_start, 2, MPI_UINT32_T, win_col);
 					MPI_Win_flush(dest_get, win_col);
-
-//					fprintf(stdout,"*%u with OFFSET start in COL[%u] = %u - OFFSET REMOTO IN ROW [%u %u] prc-remote %d\n",gvid,off_start, col[off_start],r_off[0], r_off[1], dest_get);
-
 					MPI_Get(adj_v, r_off[1]-r_off[0], MPI_UINT32_T, dest_get, r_off[0], r_off[1]-r_off[0], MPI_UINT32_T, win_row);
 					MPI_Win_flush(dest_get, win_row);
-					//printf("\(");
-					//for (vv = 0; vv < r_off[1]-r_off[0]; vv++){
-					//	fprintf(stdout,"%u ", adj_v[vv]);
-					//}
-//					printf(")\n");
 				}else{
 					r_off[0] = col[off_start];
 					r_off[1] = col[off_start+1];
-//					fprintf(stdout,"*%u with OFFSET start in COL[%u] = %u - OFFSET LOCAL IN ROW [%u %u] prc-local %d\n",gvid,off_start, col[off_start],r_off[0], r_off[1], dest_get);
 					memcpy(adj_v, &row[r_off[0]], (r_off[1]-r_off[0])*sizeof(LOCINT));
 
 				}
-				//printf("check current child in adj(%u)\n",LOCJ2GJ(i));				
-				//printf("\n\t\t %d-child %u \n",jj, gvid);
+#pragma omp parallel for schedule(dynamic, 8) reduction(+:counter)
 				for (vv = 0; vv < r_off[1]-r_off[0]; vv++){
 					if (adj_v[vv] == LOCI2GI(i)) continue;
 					for  (vvv = 0; vvv < row_offset; vvv++){
-						//printf("(%u ?=  %u) ",adj_v[vv],  adj_local[vvv]);
 						if (adj_v[vv] == adj_local[vvv]){
 							counter +=1;
 						}
 					}
-					//printf("\n");
 				}
 			}
 			if (row_offset == 1 || row_offset == 0){ 
@@ -2256,7 +2237,7 @@ int main(int argc, char *argv[]) {
 	LOCINT *approx_vertices =NULL;
 	float *dist0=NULL;
 	LOCINT *dist_deg=NULL;
-    LOCINT *sum_deg_neigh=NULL;
+        LOCINT *sum_deg_neigh=NULL;
 	float *dist_lcc=NULL;
 	float *cc_lcc =NULL;
 	float *dist_bc = NULL;
@@ -2754,7 +2735,10 @@ int main(int argc, char *argv[]) {
 
 		}else if (distribution == 2 ){
 			if (myid == 0)fprintf(stdout,"LCC  sampling strategy\n" );
+ TIMER_START(0);
 			lcc_func(col, row, cc_lcc);
+TIMER_STOP(0);
+if (myid == 0) fprintf(stdout, "LCC done in %f secs\n",TIMER_ELAPSED(0)/1.0E+6);
 			prefix_by_col_float(cc_lcc, col_bl, &sum_lcc, dist_lcc);
 
 		}else if (distribution == 3){

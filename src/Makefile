@@ -14,8 +14,8 @@ CUDA_ARCH=-arch=sm_37
 CUDACFLAGS=-m64 -c -O3  --ptxas-options=-v -DCUDA  -DONEDEGREE --use_fast_math
 
 
-CFLAGS=-g -W -Wall -Wno-unused-function -Wno-unused-parameter -c -O3 -DMPI -DCUDA  -L$(MPI_HOME)/lib64 -lmpi   -I$(CUDA_HOME)/include -I$(CUB_INCLUDE)
-LDFLAGS = -L$(MPI_HOME)/lib64 -lmpi -L$(CUDA_HOME)/lib64 -lcudart -lstdc++ ${GRAPH_GEN_LIB}/libgraph_generator_mpi.a  -lm -Wno-deprecated-gpu-targets
+CFLAGS=-g -W -Wall -Wno-unused-function -Wno-unused-parameter -c -O3 -DMPI -DCUDA  -L$(MPI_HOME)/lib64 -lmpi -fopenmp  -I$(CUDA_HOME)/include -I$(CUB_INCLUDE)
+LDFLAGS = -L$(MPI_HOME)/lib64 -lmpi -L$(CUDA_HOME)/lib64 -lcudart -lstdc++ ${GRAPH_GEN_LIB}/libgraph_generator_mpi.a -fopenmp -lm -Wno-deprecated-gpu-targets
 
 OBJ=axbc2d.o cuda_kernels.o adtp.o
 
