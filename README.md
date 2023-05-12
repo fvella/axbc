@@ -27,7 +27,9 @@ Description of the most important options
 -c is seleted the value -N represent the maximum number of Brandes iterations. 
 
 ### Herustics 
-Select a strategy between 0 and 6
+Select a strategy between 0 and 6.
+
+
 0. Uniform sampling 
 1. High-Degree Neighborhood: first randomly select an vertex with an high outdegree. Then it randomly selects a neighbours of a such vertex. 
 2. Local Clustering Coefficient: compute a distribution based on LCC score. This heuristics is particularly expesive on large graphs.   
@@ -37,10 +39,15 @@ Select a strategy between 0 and 6
 6. Roulette wheel: randomly select one of the heustistics for each iteration of the algorithm. 
 
 Other options are:
+
 -H 1: implements 1-degree reduction. Pre-process the graph by removing vertices with 1 neighbour (1-degree reduction).
+
 -m: shared-memory implementation. 
+
 -U: make the graph undirected.
+
 -a: analyze the degree.
+
 -d: dump the graph.
 
 [^1]:Brandes, U., 2001. A faster algorithm for betweenness centrality. Journal of
